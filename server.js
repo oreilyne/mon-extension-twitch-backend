@@ -44,8 +44,11 @@ function getChannel(channelId){
         giveawayResultDisplaySec: 8,// durée d'affichage du gagnant avant retour à l'écran d'accueil
         gameDefaultDuration: 15,    // durée par défaut proposée pour une manche de mini-jeu
         gameResultDisplaySec: 8,    // durée d'affichage du classement avant retour à l'écran d'accueil
-        showLastWinnerBadge: true   // afficher une petite bulle "dernier gagnant" sur le stream
-      }
+        showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
+        gameTotalsAutoResetDays: 30 // reset auto du cumul mini-jeu (0 = jamais automatique)
+      },
+      gameTotals: new Map(),     // cumul all-time par joueur : userId -> { name, total } (ne se reset PAS entre lives)
+      gameTotalsResetAt: null    // prochaine date de reset automatique (timestamp), calculée au premier score
     });
   }
   return channels.get(channelId);
@@ -240,6 +243,7 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.gameDefaultDuration !== undefined) ch.settings.gameDefaultDuration = Math.max(5, Math.min(300, Number(s.gameDefaultDuration) || 15));
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
+  if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
 
   await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
   res.json({ ok: true, settings: ch.settings });
@@ -451,7 +455,9 @@ app.post('/api/game/score', verifyTwitchJWT, (req, res) => {
   // Anti-triche basique : borne le nombre de clics à un maximum plausible
   const clicks = Math.min(Number(req.body.clicks) || 0, 500);
   const userId = req.twitch.user_id;
-  const displayName = (typeof req.body.displayName === 'string') ? req.body.displayName.slice(0,40) : null;
+  const displayName = (typeof req.body.displayName === 'string' && req.body.displayName.trim())
+    ? req.body.displayName.trim().slice(0,40)
+    : 'Joueur·se mystère';
 
   const prev = ch.game.scores.get(userId);
   if(!prev || clicks > prev.score){
@@ -461,9 +467,24 @@ app.post('/api/game/score', verifyTwitchJWT, (req, res) => {
 });
 
 function buildLeaderboard(game){
-  return Array.from(game.scores.values())
+  return Array.from(game.scores.entries())
+    .map(([userId, entry]) => ({ userId, name: entry.name, score: entry.score }))
     .sort((a,b) => b.score - a.score)
     .slice(0,10);
+}
+
+function maybeAutoResetGameTotals(ch){
+  const days = ch.settings.gameTotalsAutoResetDays;
+  if(!days) return; // reset automatique désactivé
+  const now = Date.now();
+  if(!ch.gameTotalsResetAt){
+    ch.gameTotalsResetAt = now + days * 86400000;
+    return;
+  }
+  if(now >= ch.gameTotalsResetAt){
+    ch.gameTotals.clear();
+    ch.gameTotalsResetAt = now + days * 86400000;
+  }
 }
 
 async function runGameResults(channelId){
@@ -471,7 +492,19 @@ async function runGameResults(channelId){
   if(!ch.game || ch.game.finished) return; // déjà conclue (ex: bouton manuel entre-temps)
   clearGameTimers(ch);
   ch.game.finished = true;
-  const leaderboard = buildLeaderboard(ch.game);
+
+  maybeAutoResetGameTotals(ch);
+
+  const roundScores = buildLeaderboard(ch.game); // classement de cette manche uniquement, trié par score
+
+  // Fusionne dans le cumul all-time (ne se réinitialise jamais entre lives,
+  // seulement via le reset auto mensuel ou le bouton manuel)
+  const leaderboard = roundScores.map(entry => {
+    const prevTotal = ch.gameTotals.get(entry.userId);
+    const newTotal = (prevTotal ? prevTotal.total : 0) + entry.score;
+    ch.gameTotals.set(entry.userId, { name: entry.name, total: newTotal });
+    return { name: entry.name, score: entry.score, total: newTotal };
+  });
 
   await sendBroadcast(channelId, {
     type: 'game_round_end',
@@ -480,6 +513,16 @@ async function runGameResults(channelId){
   setTimeout(() => sendBroadcast(channelId, { type: 'clear_display' }), ch.settings.gameResultDisplaySec * 1000);
   return leaderboard;
 }
+
+// Reset manuel du cumul all-time (bouton dédié dans les réglages avancés)
+app.post('/api/game/totals/reset', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  ch.gameTotals.clear();
+  ch.gameTotalsResetAt = ch.settings.gameTotalsAutoResetDays
+    ? Date.now() + ch.settings.gameTotalsAutoResetDays * 86400000
+    : null;
+  res.json({ ok: true });
+}));
 
 // Bouton manuel du panneau mod : force la fin de manche avant le minuteur
 app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
