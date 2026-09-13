@@ -98,6 +98,8 @@ function getChannel(channelId){
       bonkGrowth: 1.4,              // à quel point chaque niveau demande plus d'xp que le précédent (1 = plat, 2 = très raide)
       bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
       bonkLegendMessage: '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆', // {name} remplacé automatiquement
+      rgbEvents: false,     // contour RGB animé sur les annonces (gagnant du give away, légende du bonk...)
+      rgbMinigames: false,  // contour RGB animé sur les résultats du mini-jeu
       donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
       donationLabel: '💜 Soutenir la chaîne', // texte affiché sur le bouton de don
       discordUrl: '',              // lien vers le Discord, affiché dans le profil viewer
@@ -341,6 +343,8 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.discordUrl !== undefined) ch.settings.discordUrl = String(s.discordUrl).slice(0, 200);
   if(s.discordLabel !== undefined) ch.settings.discordLabel = String(s.discordLabel).slice(0, 60) || '💬 Rejoindre le Discord';
   if(s.bonkLegendMessage !== undefined) ch.settings.bonkLegendMessage = String(s.bonkLegendMessage).slice(0, 200) || '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆';
+  if(s.rgbEvents !== undefined) ch.settings.rgbEvents = !!s.rgbEvents;
+  if(s.rgbMinigames !== undefined) ch.settings.rgbMinigames = !!s.rgbMinigames;
 
   persistSettings(req.twitch.channel_id, ch.settings);
   await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
