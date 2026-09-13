@@ -88,11 +88,12 @@ function getChannel(channelId){
       showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
       gameTotalsAutoResetDays: 30,// reset auto du cumul mini-jeu (0 = jamais automatique)
       reactions: [                // liste illimitée de boutons de réaction (hors confettis et bonk, fixes)
-        { glyph: '❤️' },
-        { glyph: '😄' },
-        { glyph: '🔥' }
+        { glyph: '❤️', speed: 2.2 },
+        { glyph: '😄', speed: 2.2 },
+        { glyph: '🔥', speed: 2.2 }
       ],
-      reactionSpeed: 2.2,          // multiplicateur de vitesse des particules (1 = normal)
+      confettiSpeed: 2.2,          // vitesse propre aux confettis (indépendante des autres réactions)
+      profileMessage: '',          // texte libre affiché dans le profil des viewers (accueil)
       bonkBaseXp: 15,               // xp nécessaire pour passer du niveau 1 au niveau 2
       bonkGrowth: 1.4,              // à quel point chaque niveau demande plus d'xp que le précédent (1 = plat, 2 = très raide)
       bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
@@ -322,10 +323,14 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(Array.isArray(s.reactions)){
     ch.settings.reactions = s.reactions
       .slice(0, 10)
-      .map(r => ({ glyph: String((r && r.glyph) || '').slice(0, 300) }))
+      .map(r => ({
+        glyph: String((r && r.glyph) || '').slice(0, 300),
+        speed: Math.max(0.3, Math.min(5, Number(r && r.speed) || 2.2))
+      }))
       .filter(r => r.glyph);
   }
-  if(s.reactionSpeed !== undefined) ch.settings.reactionSpeed = Math.max(0.3, Math.min(5, Number(s.reactionSpeed) || 1.6));
+  if(s.confettiSpeed !== undefined) ch.settings.confettiSpeed = Math.max(0.3, Math.min(5, Number(s.confettiSpeed) || 2.2));
+  if(s.profileMessage !== undefined) ch.settings.profileMessage = String(s.profileMessage).slice(0, 500);
   if(s.bonkBaseXp !== undefined) ch.settings.bonkBaseXp = Math.max(1, Math.min(1000, Number(s.bonkBaseXp) || 15));
   if(s.bonkGrowth !== undefined) ch.settings.bonkGrowth = Math.max(1, Math.min(3, Number(s.bonkGrowth) || 1.4));
   if(s.bonkMaxLevel !== undefined) ch.settings.bonkMaxLevel = Math.max(1, Math.min(50, Number(s.bonkMaxLevel) || 15));
@@ -752,7 +757,8 @@ app.get('/api/mystats', verifyTwitchJWT, (req, res) => {
     stats: { ...stats, bonkLevel: level, currentLevelXp: currentThreshold, xpForNextLevel: nextThreshold },
     gameTotal: totalGame ? totalGame.total : 0,
     donationUrl: ch.settings.donationUrl,
-    discordUrl: ch.settings.discordUrl
+    discordUrl: ch.settings.discordUrl,
+    profileMessage: ch.settings.profileMessage
   });
 });
 
