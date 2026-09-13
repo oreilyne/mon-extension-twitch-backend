@@ -37,6 +37,7 @@ function getChannel(channelId){
       giveaway: null,       // { entrants:Map(userId->name), winner, command, reward, endsAt }
       giveawayTimers: [],   // setTimeout ids en cours (annonces + tirage auto)
       game: null,           // { endsAt, finished, scores:Map(userId->{name,score}) }
+      gameTimers: [],        // setTimeout ids en cours pour le mini-jeu (fin auto)
       winners: [],          // historique des gagnants du live en cours : [{name, reward}]
       settings: {
         countdownSeconds: 5,        // durée du compte à rebours du give away (dernières secondes)
@@ -413,19 +414,33 @@ app.post('/api/giveaway/draw', verifyTwitchJWT, requireBroadcasterOrMod, safeRou
 /* =========================================================
    MINI-JEU — Chasse aux clics
    ========================================================= */
+function clearGameTimers(ch){
+  (ch.gameTimers || []).forEach(id => clearTimeout(id));
+  ch.gameTimers = [];
+}
+
 app.post('/api/game/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const { durationSec } = req.body;
-  const ch = getChannel(req.twitch.channel_id);
+  const channelId = req.twitch.channel_id;
+  const ch = getChannel(channelId);
   const duration = Number(durationSec) || ch.settings.gameDefaultDuration;
+  clearGameTimers(ch);
+
   ch.game = {
     endsAt: Date.now() + duration*1000,
     finished: false,
     scores: new Map()
   };
-  await sendBroadcast(req.twitch.channel_id, {
+  await sendBroadcast(channelId, {
     type: 'game_round_start',
     durationSec: duration
   });
+
+  // Fin automatique : on laisse 1,5s de marge après le minuteur pour laisser
+  // le temps aux derniers scores des viewers d'arriver au serveur.
+  const t = setTimeout(() => runGameResults(channelId), (duration + 1.5) * 1000);
+  ch.gameTimers.push(t);
+
   res.json({ ok: true });
 }));
 
@@ -451,10 +466,10 @@ function buildLeaderboard(game){
     .slice(0,10);
 }
 
-app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
-  const channelId = req.twitch.channel_id;
+async function runGameResults(channelId){
   const ch = getChannel(channelId);
-  if(!ch.game) return res.status(400).send('Aucune manche à conclure');
+  if(!ch.game || ch.game.finished) return; // déjà conclue (ex: bouton manuel entre-temps)
+  clearGameTimers(ch);
   ch.game.finished = true;
   const leaderboard = buildLeaderboard(ch.game);
 
@@ -463,6 +478,15 @@ app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRout
     leaderboard
   });
   setTimeout(() => sendBroadcast(channelId, { type: 'clear_display' }), ch.settings.gameResultDisplaySec * 1000);
+  return leaderboard;
+}
+
+// Bouton manuel du panneau mod : force la fin de manche avant le minuteur
+app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const channelId = req.twitch.channel_id;
+  const ch = getChannel(channelId);
+  if(!ch.game) return res.status(400).send('Aucune manche à conclure');
+  const leaderboard = await runGameResults(channelId);
   res.json({ ok: true, leaderboard });
 }));
 
