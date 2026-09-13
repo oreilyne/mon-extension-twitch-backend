@@ -1,0 +1,16 @@
+{
+  "name": "twitch-extension-ebs",
+  "version": "1.0.0",
+  "description": "EBS (backend) pour l'extension Twitch overlay/component : sondage, giveaway, mini-jeu, célébrations",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "node-fetch": "^2.7.0"
+  }
+}
