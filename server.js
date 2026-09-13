@@ -85,6 +85,20 @@ function clearGiveawayTimers(ch){
   ch.giveawayTimers = [];
 }
 
+// Capture toute erreur dans une route async et répond en 500 avec le détail,
+// au lieu de laisser la requête sans réponse (ce qui donnait l'impression
+// que "rien ne se passe" côté extension).
+function safeRoute(fn){
+  return async (req, res) => {
+    try{
+      await fn(req, res);
+    }catch(err){
+      console.error(`Erreur sur ${req.method} ${req.path} :`, err);
+      if(!res.headersSent) res.status(500).send('Erreur serveur : ' + err.message);
+    }
+  };
+}
+
 /* =========================================================
    VÉRIFICATION DU JWT TWITCH
    ========================================================= */
@@ -177,7 +191,7 @@ app.get('/api/state', verifyTwitchJWT, (req, res) => {
 /* =========================================================
    SONDAGE
    ========================================================= */
-app.post('/api/poll/start', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/poll/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const { question, options, durationSec } = req.body;
   if(!question || !Array.isArray(options) || options.length < 2 || options.length > 4){
     return res.status(400).send('Question + 2 à 4 options requises');
@@ -194,9 +208,9 @@ app.post('/api/poll/start', verifyTwitchJWT, requireBroadcasterOrMod, async (req
     poll: { question, options: ch.poll.options }
   });
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/poll/vote', verifyTwitchJWT, async (req, res) => {
+app.post('/api/poll/vote', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
   if(!ch.poll) return res.status(400).send('Aucun sondage en cours');
   const userId = req.twitch.user_id;
@@ -214,19 +228,19 @@ app.post('/api/poll/vote', verifyTwitchJWT, async (req, res) => {
     options: ch.poll.options
   });
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/poll/end', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/poll/end', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
   ch.poll = null;
   await sendBroadcast(req.twitch.channel_id, { type: 'poll_end' });
   res.json({ ok: true });
-});
+}));
 
 /* =========================================================
    GIVE AWAY
    ========================================================= */
-app.post('/api/giveaway/start', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/giveaway/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   let { durationSec, command } = req.body;
   durationSec = Number(durationSec) || 60;
   command = (typeof command === 'string' && command.trim()) ? command.trim().toLowerCase() : '!concours';
@@ -271,9 +285,9 @@ app.post('/api/giveaway/start', verifyTwitchJWT, requireBroadcasterOrMod, async 
   ch.giveawayTimers.push(drawTimer);
 
   res.json({ ok: true });
-});
+}));
 
-app.post('/api/giveaway/join', verifyTwitchJWT, async (req, res) => {
+app.post('/api/giveaway/join', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
   if(!ch.giveaway || ch.giveaway.winner) return res.status(400).send('Aucune inscription ouverte');
   const userId = req.twitch.user_id;
@@ -291,7 +305,7 @@ app.post('/api/giveaway/join', verifyTwitchJWT, async (req, res) => {
     entryCount: ch.giveaway.entrants.size
   });
   res.json({ ok: true, entryCount: ch.giveaway.entrants.size });
-});
+}));
 
 async function runGiveawayDraw(channelId){
   const ch = getChannel(channelId);
@@ -315,18 +329,18 @@ async function runGiveawayDraw(channelId){
 }
 
 // Tirage manuel (le/la modérateur·rice peut forcer le tirage avant la fin du minuteur)
-app.post('/api/giveaway/draw', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/giveaway/draw', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const channelId = req.twitch.channel_id;
   const ch = getChannel(channelId);
   if(!ch.giveaway) return res.status(400).send('Aucun give away en cours');
   await runGiveawayDraw(channelId);
   res.json({ ok: true, winnerName: ch.giveaway.winner });
-});
+}));
 
 /* =========================================================
    MINI-JEU — Chasse aux clics
    ========================================================= */
-app.post('/api/game/start', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/game/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const { durationSec } = req.body;
   const duration = Number(durationSec) || 15;
   const ch = getChannel(req.twitch.channel_id);
@@ -340,7 +354,7 @@ app.post('/api/game/start', verifyTwitchJWT, requireBroadcasterOrMod, async (req
     durationSec: duration
   });
   res.json({ ok: true });
-});
+}));
 
 app.post('/api/game/score', verifyTwitchJWT, (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
@@ -364,7 +378,7 @@ function buildLeaderboard(game){
     .slice(0,10);
 }
 
-app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
   if(!ch.game) return res.status(400).send('Aucune manche à conclure');
   ch.game.finished = true;
@@ -375,15 +389,15 @@ app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, async (r
     leaderboard
   });
   res.json({ ok: true, leaderboard });
-});
+}));
 
 /* =========================================================
    CÉLÉBRATION LIBRE (confettis à la demande)
    ========================================================= */
-app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, async (req, res) => {
+app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   await sendBroadcast(req.twitch.channel_id, { type: 'celebrate' });
   res.json({ ok: true });
-});
+}));
 
 app.get('/', (req, res) => res.send('EBS extension Twitch — OK'));
 
