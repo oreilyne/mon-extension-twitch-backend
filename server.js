@@ -4,8 +4,28 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const fetch = require('node-fetch');
 const tmi = require('tmi.js');
+const fs = require('fs');
+
+const DATA_FILE = __dirname + '/data.json';
+// ⚠️ Persistance simple sur disque : survit à un redémarrage normal du
+// service, mais PAS à un redéploiement (Render recrée le disque à chaque
+// déploiement). Pour une persistance garantie même après un déploiement,
+// il faudrait une vraie base de données externe (ex: Upstash Redis, gratuit) —
+// possible à ajouter plus tard si besoin.
+function loadPersistedSettings(){
+  try{ return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
+  catch(e){ return {}; }
+}
+function persistSettings(channelId, settings){
+  try{
+    const all = loadPersistedSettings();
+    all[channelId] = settings;
+    fs.writeFileSync(DATA_FILE, JSON.stringify(all));
+  }catch(e){ console.error('Erreur persistance réglages :', e.message); }
+}
 
 const CLIENT_ID = (process.env.EXTENSION_CLIENT_ID || '').trim();
+const CLIENT_SECRET = (process.env.EXTENSION_CLIENT_SECRET || '').trim(); // "Secret de l'API client Twitch" (différent du secret d'extension)
 const SECRET = Buffer.from((process.env.EXTENSION_SECRET || '').trim(), 'base64');
 const PORT = process.env.PORT || 8081;
 
@@ -32,6 +52,27 @@ app.use(express.json());
 const channels = new Map();
 function getChannel(channelId){
   if(!channels.has(channelId)){
+    const defaultSettings = {
+      countdownSeconds: 5,        // durée du compte à rebours du give away (dernières secondes)
+      giveawayResultDisplaySec: 8,// durée d'affichage du gagnant avant retour à l'écran d'accueil
+      gameDefaultDuration: 15,    // durée par défaut proposée pour une manche de mini-jeu
+      gameResultDisplaySec: 8,    // durée d'affichage du classement avant retour à l'écran d'accueil
+      showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
+      gameTotalsAutoResetDays: 30,// reset auto du cumul mini-jeu (0 = jamais automatique)
+      reactions: [                // liste illimitée de boutons de réaction (hors confettis et bonk, fixes)
+        { glyph: '❤️' },
+        { glyph: '😄' },
+        { glyph: '🔥' }
+      ],
+      reactionSpeed: 2.2,          // multiplicateur de vitesse des particules (1 = normal)
+      bonkXpPerLevel: 20,          // xp de bonk nécessaire pour passer au niveau suivant
+      bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
+      bonkLegendMessage: '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆', // {name} remplacé automatiquement
+      donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
+      discordUrl: ''              // lien vers le Discord, affiché dans le profil viewer
+    };
+    const persisted = loadPersistedSettings()[channelId];
+
     channels.set(channelId, {
       poll: null,          // { question, options:[{label,votes}], voters:Set, durationSec, endsAt }
       giveaway: null,       // { entrants:Map(userId->name), winner, command, reward, endsAt }
@@ -39,24 +80,10 @@ function getChannel(channelId){
       game: null,           // { endsAt, finished, scores:Map(userId->{name,score}) }
       gameTimers: [],        // setTimeout ids en cours pour le mini-jeu (fin auto)
       winners: [],          // historique des gagnants du live en cours : [{name, reward}]
-      settings: {
-        countdownSeconds: 5,        // durée du compte à rebours du give away (dernières secondes)
-        giveawayResultDisplaySec: 8,// durée d'affichage du gagnant avant retour à l'écran d'accueil
-        gameDefaultDuration: 15,    // durée par défaut proposée pour une manche de mini-jeu
-        gameResultDisplaySec: 8,    // durée d'affichage du classement avant retour à l'écran d'accueil
-        showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
-        gameTotalsAutoResetDays: 30,// reset auto du cumul mini-jeu (0 = jamais automatique)
-        customEmoji: '🔥',          // emoji utilisé pour le 4e bouton de réaction perso
-        heartsGlyph: '❤️',          // emoji ou URL d'image pour l'effet coeurs
-        smileyGlyph: '😄',          // emoji ou URL d'image pour l'effet smiley
-        bonkXpPerLevel: 20,          // xp de bonk nécessaire pour passer au niveau suivant
-        bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
-        donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
-        discordUrl: ''              // lien vers le Discord, affiché dans le profil viewer
-      },
+      settings: persisted ? { ...defaultSettings, ...persisted } : defaultSettings,
       gameTotals: new Map(),     // cumul all-time par joueur : userId -> { name, total } (ne se reset PAS entre lives)
       gameTotalsResetAt: null,   // prochaine date de reset automatique (timestamp), calculée au premier score
-      viewerStats: new Map()     // stats perso : userId -> { name, bonkXp, clicks:{confetti,hearts,smiley,emoji,bonk} }
+      viewerStats: new Map()     // stats perso : userId -> { name, bonkXp, clicks:{confetti,reactions,bonk} }
     });
   }
   return channels.get(channelId);
@@ -252,14 +279,20 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
   if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
-  if(s.customEmoji !== undefined) ch.settings.customEmoji = String(s.customEmoji).slice(0, 300) || '🔥';
-  if(s.heartsGlyph !== undefined) ch.settings.heartsGlyph = String(s.heartsGlyph).slice(0, 300) || '❤️';
-  if(s.smileyGlyph !== undefined) ch.settings.smileyGlyph = String(s.smileyGlyph).slice(0, 300) || '😄';
+  if(Array.isArray(s.reactions)){
+    ch.settings.reactions = s.reactions
+      .slice(0, 10)
+      .map(r => ({ glyph: String((r && r.glyph) || '').slice(0, 300) }))
+      .filter(r => r.glyph);
+  }
+  if(s.reactionSpeed !== undefined) ch.settings.reactionSpeed = Math.max(0.3, Math.min(5, Number(s.reactionSpeed) || 1.6));
   if(s.bonkXpPerLevel !== undefined) ch.settings.bonkXpPerLevel = Math.max(1, Math.min(1000, Number(s.bonkXpPerLevel) || 20));
   if(s.bonkMaxLevel !== undefined) ch.settings.bonkMaxLevel = Math.max(1, Math.min(50, Number(s.bonkMaxLevel) || 15));
   if(s.donationUrl !== undefined) ch.settings.donationUrl = String(s.donationUrl).slice(0, 200);
   if(s.discordUrl !== undefined) ch.settings.discordUrl = String(s.discordUrl).slice(0, 200);
+  if(s.bonkLegendMessage !== undefined) ch.settings.bonkLegendMessage = String(s.bonkLegendMessage).slice(0, 200) || '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆';
 
+  persistSettings(req.twitch.channel_id, ch.settings);
   await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
   res.json({ ok: true, settings: ch.settings });
 }));
@@ -561,8 +594,9 @@ app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRout
    CÉLÉBRATION LIBRE (confettis à la demande)
    ========================================================= */
 app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
-  const effectType = ['confetti','hearts','smiley','emoji'].includes(req.body.effectType) ? req.body.effectType : 'confetti';
-  await sendBroadcast(req.twitch.channel_id, { type: 'celebrate', effectType });
+  // glyph absent/null → confettis carrés classiques ; sinon emoji ou URL d'image
+  const glyph = (typeof req.body.glyph === 'string' && req.body.glyph.trim()) ? req.body.glyph.trim().slice(0, 300) : null;
+  await sendBroadcast(req.twitch.channel_id, { type: 'celebrate', glyph });
   res.json({ ok: true });
 }));
 
@@ -571,12 +605,10 @@ app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(a
    viewer : effet visuel local chez lui uniquement + stats perso
    suivies côté serveur — pas de broadcast, pas de spam pour les autres)
    ========================================================= */
-const REACTION_TYPES = ['confetti', 'hearts', 'smiley', 'emoji', 'bonk'];
-
 function getViewerStats(ch, userId, displayName){
   let stats = ch.viewerStats.get(userId);
   if(!stats){
-    stats = { name: displayName || 'Viewer', bonkXp: 0, clicks: { confetti:0, hearts:0, smiley:0, emoji:0, bonk:0 } };
+    stats = { name: displayName || 'Viewer', bonkXp: 0, clicks: { confetti:0, reactions:0, bonk:0 } };
     ch.viewerStats.set(userId, stats);
   }
   if(displayName) stats.name = displayName;
@@ -589,16 +621,45 @@ function bonkLevel(xp, xpPerLevel, maxLevel){
 
 app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
-  const { type, displayName } = req.body;
-  if(!REACTION_TYPES.includes(type)) return res.status(400).send('Type de réaction invalide');
+  const { kind, displayName } = req.body; // kind: 'confetti' | 'reaction' | 'bonk'
+  if(!['confetti','reaction','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
 
   const userId = req.twitch.user_id;
   const stats = getViewerStats(ch, userId, displayName);
-  stats.clicks[type] = (stats.clicks[type] || 0) + 1;
-  if(type === 'bonk') stats.bonkXp += 1;
+  stats.clicks[kind] = (stats.clicks[kind] || 0) + 1;
+  if(kind === 'bonk') stats.bonkXp += 1;
 
   const level = bonkLevel(stats.bonkXp, ch.settings.bonkXpPerLevel, ch.settings.bonkMaxLevel);
   res.json({ ok: true, stats: { ...stats, bonkLevel: level } });
+}));
+
+// Pousse immédiatement le vrai pseudo dès qu'un viewer partage son identité
+// (au lieu d'attendre sa prochaine action pour que le nom se mette à jour)
+app.post('/api/update-name', verifyTwitchJWT, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const displayName = (typeof req.body.displayName === 'string' && req.body.displayName.trim()) ? req.body.displayName.trim().slice(0,40) : null;
+  if(!displayName) return res.status(400).send('Pseudo manquant');
+  getViewerStats(ch, req.twitch.user_id, displayName);
+  res.json({ ok: true });
+}));
+
+// Réinitialise le niveau de bonk de TOUS les viewers (bouton dans les réglages)
+app.post('/api/bonk/reset', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  ch.viewerStats.forEach(v => { v.bonkXp = 0; });
+  res.json({ ok: true });
+}));
+
+// Un viewer atteint 1000 de combo bonk : annonce spéciale pour tout le monde + le bot
+app.post('/api/bonk/legend', verifyTwitchJWT, safeRoute(async (req, res) => {
+  const channelId = req.twitch.channel_id;
+  const ch = getChannel(channelId);
+  const name = (typeof req.body.displayName === 'string' && req.body.displayName.trim()) ? req.body.displayName.trim().slice(0,40) : 'un·e viewer mystère';
+  const message = (ch.settings.bonkLegendMessage || '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆').replace(/\{name\}/g, name);
+
+  await sendBroadcast(channelId, { type: 'bonk_legend', name, message });
+  tmiSay('🔨👑 ' + message);
+  res.json({ ok: true });
 }));
 
 app.get('/api/mystats', verifyTwitchJWT, (req, res) => {
@@ -611,12 +672,57 @@ app.get('/api/mystats', verifyTwitchJWT, (req, res) => {
     stats: { ...stats, bonkLevel: level, xpForNextLevel: ch.settings.bonkXpPerLevel },
     gameTotal: totalGame ? totalGame.total : 0,
     donationUrl: ch.settings.donationUrl,
-    discordUrl: ch.settings.discordUrl,
-    customEmoji: ch.settings.customEmoji
+    discordUrl: ch.settings.discordUrl
   });
 });
 
 app.get('/', (req, res) => res.send('EBS extension Twitch — OK'));
+
+/* =========================================================
+   RECHERCHE D'EMOTES TWITCH (pour utiliser une vraie emote de
+   ta chaîne dans les réactions, plutôt qu'un simple emoji)
+   ========================================================= */
+let appAccessToken = null;
+let appAccessTokenExpiresAt = 0;
+
+async function getAppAccessToken(){
+  if(appAccessToken && Date.now() < appAccessTokenExpiresAt) return appAccessToken;
+  if(!CLIENT_SECRET){
+    throw new Error('EXTENSION_CLIENT_SECRET manquant côté serveur — nécessaire pour rechercher tes emotes.');
+  }
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    grant_type: 'client_credentials'
+  });
+  const res = await fetch('https://id.twitch.tv/oauth2/token?' + params.toString(), { method: 'POST' });
+  if(!res.ok){
+    throw new Error('Impossible de récupérer un token Twitch app (' + res.status + ')');
+  }
+  const data = await res.json();
+  appAccessToken = data.access_token;
+  appAccessTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000; // marge de sécurité d'1 min
+  return appAccessToken;
+}
+
+app.get('/api/emote-lookup', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const name = (req.query.name || '').trim();
+  if(!name) return res.status(400).send('Indique le nom exact de ton emote');
+
+  const token = await getAppAccessToken();
+  const helixRes = await fetch('https://api.twitch.tv/helix/chat/emotes?broadcaster_id=' + encodeURIComponent(req.twitch.channel_id), {
+    headers: { 'Authorization': 'Bearer ' + token, 'Client-Id': CLIENT_ID }
+  });
+  if(!helixRes.ok){
+    return res.status(502).send('Erreur Twitch (' + helixRes.status + ') en cherchant tes emotes');
+  }
+  const data = await helixRes.json();
+  const found = (data.data || []).find(e => e.name.toLowerCase() === name.toLowerCase());
+  if(!found){
+    return res.status(404).send(`Emote "${name}" introuvable parmi les emotes de ta chaîne. Vérifie l'orthographe exacte (sensible à la casse habituellement pas, mais au nom complet oui).`);
+  }
+  res.json({ ok: true, url: found.images.url_4x || found.images.url_2x || found.images.url_1x, name: found.name });
+}));
 
 app.get('/privacy', (req, res) => {
   res.type('html').send(`
