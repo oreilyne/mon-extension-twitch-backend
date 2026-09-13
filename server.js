@@ -99,7 +99,9 @@ function getChannel(channelId){
       bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
       bonkLegendMessage: '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆', // {name} remplacé automatiquement
       donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
-      discordUrl: ''              // lien vers le Discord, affiché dans le profil viewer
+      donationLabel: '💜 Soutenir la chaîne', // texte affiché sur le bouton de don
+      discordUrl: '',              // lien vers le Discord, affiché dans le profil viewer
+      discordLabel: '💬 Rejoindre le Discord' // texte affiché sur le bouton Discord
     };
     const persisted = loadPersistedSettings()[channelId];
 
@@ -335,7 +337,9 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.bonkGrowth !== undefined) ch.settings.bonkGrowth = Math.max(1, Math.min(3, Number(s.bonkGrowth) || 1.4));
   if(s.bonkMaxLevel !== undefined) ch.settings.bonkMaxLevel = Math.max(1, Math.min(50, Number(s.bonkMaxLevel) || 15));
   if(s.donationUrl !== undefined) ch.settings.donationUrl = String(s.donationUrl).slice(0, 200);
+  if(s.donationLabel !== undefined) ch.settings.donationLabel = String(s.donationLabel).slice(0, 60) || '💜 Soutenir la chaîne';
   if(s.discordUrl !== undefined) ch.settings.discordUrl = String(s.discordUrl).slice(0, 200);
+  if(s.discordLabel !== undefined) ch.settings.discordLabel = String(s.discordLabel).slice(0, 60) || '💬 Rejoindre le Discord';
   if(s.bonkLegendMessage !== undefined) ch.settings.bonkLegendMessage = String(s.bonkLegendMessage).slice(0, 200) || '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆';
 
   persistSettings(req.twitch.channel_id, ch.settings);
@@ -757,7 +761,9 @@ app.get('/api/mystats', verifyTwitchJWT, (req, res) => {
     stats: { ...stats, bonkLevel: level, currentLevelXp: currentThreshold, xpForNextLevel: nextThreshold },
     gameTotal: totalGame ? totalGame.total : 0,
     donationUrl: ch.settings.donationUrl,
+    donationLabel: ch.settings.donationLabel,
     discordUrl: ch.settings.discordUrl,
+    discordLabel: ch.settings.discordLabel,
     profileMessage: ch.settings.profileMessage
   });
 });
