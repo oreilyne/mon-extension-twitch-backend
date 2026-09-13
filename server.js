@@ -656,6 +656,31 @@ app.post('/api/update-name', verifyTwitchJWT, safeRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Contournement : pendant Local/Hosted Test, Twitch confirme parfois le lien
+// d'identité (isLinked=true) sans jamais transmettre le displayName au
+// frontend. Comme l'ID du viewer devient son vrai ID Twitch numérique une
+// fois lié, on peut aller chercher son pseudo nous-mêmes via l'API Twitch.
+app.post('/api/resolve-name', verifyTwitchJWT, safeRoute(async (req, res) => {
+  const userId = req.twitch.user_id;
+  if(!/^\d+$/.test(userId)){
+    return res.status(400).send("Identité pas encore liée (identifiant encore anonyme)");
+  }
+  const token = await getAppAccessToken();
+  const helixRes = await fetch('https://api.twitch.tv/helix/users?id=' + encodeURIComponent(userId), {
+    headers: { 'Authorization': 'Bearer ' + token, 'Client-Id': CLIENT_ID }
+  });
+  if(!helixRes.ok){
+    return res.status(502).send('Erreur Twitch (' + helixRes.status + ') en récupérant le pseudo');
+  }
+  const data = await helixRes.json();
+  const name = data.data && data.data[0] && data.data[0].display_name;
+  if(!name) return res.status(404).send('Pseudo introuvable côté Twitch');
+
+  const ch = getChannel(req.twitch.channel_id);
+  getViewerStats(ch, userId, name);
+  res.json({ ok: true, name });
+}));
+
 // Réinitialise le niveau de bonk de TOUS les viewers (bouton dans les réglages)
 app.post('/api/bonk/reset', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
