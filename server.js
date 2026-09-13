@@ -65,7 +65,8 @@ function getChannel(channelId){
         { glyph: '🔥' }
       ],
       reactionSpeed: 2.2,          // multiplicateur de vitesse des particules (1 = normal)
-      bonkXpPerLevel: 20,          // xp de bonk nécessaire pour passer au niveau suivant
+      bonkBaseXp: 15,               // xp nécessaire pour passer du niveau 1 au niveau 2
+      bonkGrowth: 1.4,              // à quel point chaque niveau demande plus d'xp que le précédent (1 = plat, 2 = très raide)
       bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
       bonkLegendMessage: '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆', // {name} remplacé automatiquement
       donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
@@ -286,7 +287,8 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
       .filter(r => r.glyph);
   }
   if(s.reactionSpeed !== undefined) ch.settings.reactionSpeed = Math.max(0.3, Math.min(5, Number(s.reactionSpeed) || 1.6));
-  if(s.bonkXpPerLevel !== undefined) ch.settings.bonkXpPerLevel = Math.max(1, Math.min(1000, Number(s.bonkXpPerLevel) || 20));
+  if(s.bonkBaseXp !== undefined) ch.settings.bonkBaseXp = Math.max(1, Math.min(1000, Number(s.bonkBaseXp) || 15));
+  if(s.bonkGrowth !== undefined) ch.settings.bonkGrowth = Math.max(1, Math.min(3, Number(s.bonkGrowth) || 1.4));
   if(s.bonkMaxLevel !== undefined) ch.settings.bonkMaxLevel = Math.max(1, Math.min(50, Number(s.bonkMaxLevel) || 15));
   if(s.donationUrl !== undefined) ch.settings.donationUrl = String(s.donationUrl).slice(0, 200);
   if(s.discordUrl !== undefined) ch.settings.discordUrl = String(s.discordUrl).slice(0, 200);
@@ -615,8 +617,19 @@ function getViewerStats(ch, userId, displayName){
   return stats;
 }
 
-function bonkLevel(xp, xpPerLevel, maxLevel){
-  return Math.min(maxLevel, Math.floor(xp / xpPerLevel) + 1);
+// XP cumulatif nécessaire pour ATTEINDRE un niveau donné (courbe progressive :
+// chaque niveau demande un peu plus d'XP que le précédent, comme un jeu vidéo)
+function xpThresholdForLevel(level, baseXp, growth){
+  if(level <= 1) return 0;
+  return Math.round(baseXp * Math.pow(level - 1, growth));
+}
+
+function bonkLevel(xp, baseXp, growth, maxLevel){
+  let level = 1;
+  while(level < maxLevel && xp >= xpThresholdForLevel(level + 1, baseXp, growth)){
+    level++;
+  }
+  return level;
 }
 
 app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
@@ -629,7 +642,7 @@ app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   stats.clicks[kind] = (stats.clicks[kind] || 0) + 1;
   if(kind === 'bonk') stats.bonkXp += 1;
 
-  const level = bonkLevel(stats.bonkXp, ch.settings.bonkXpPerLevel, ch.settings.bonkMaxLevel);
+  const level = bonkLevel(stats.bonkXp, ch.settings.bonkBaseXp, ch.settings.bonkGrowth, ch.settings.bonkMaxLevel);
   res.json({ ok: true, stats: { ...stats, bonkLevel: level } });
 }));
 
@@ -666,10 +679,13 @@ app.get('/api/mystats', verifyTwitchJWT, (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
   const userId = req.twitch.user_id;
   const stats = getViewerStats(ch, userId, null);
-  const level = bonkLevel(stats.bonkXp, ch.settings.bonkXpPerLevel, ch.settings.bonkMaxLevel);
+  const { bonkBaseXp, bonkGrowth, bonkMaxLevel } = ch.settings;
+  const level = bonkLevel(stats.bonkXp, bonkBaseXp, bonkGrowth, bonkMaxLevel);
+  const currentThreshold = xpThresholdForLevel(level, bonkBaseXp, bonkGrowth);
+  const nextThreshold = level < bonkMaxLevel ? xpThresholdForLevel(level + 1, bonkBaseXp, bonkGrowth) : currentThreshold;
   const totalGame = ch.gameTotals.get(userId);
   res.json({
-    stats: { ...stats, bonkLevel: level, xpForNextLevel: ch.settings.bonkXpPerLevel },
+    stats: { ...stats, bonkLevel: level, currentLevelXp: currentThreshold, xpForNextLevel: nextThreshold },
     gameTotal: totalGame ? totalGame.total : 0,
     donationUrl: ch.settings.donationUrl,
     discordUrl: ch.settings.discordUrl
