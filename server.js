@@ -278,4 +278,26 @@ app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, async (req,
 
 app.get('/', (req, res) => res.send('EBS extension Twitch — OK'));
 
+app.get('/privacy', (req, res) => {
+  res.type('html').send(`
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head><meta charset="UTF-8"><title>Politique de confidentialité — Extension Twitch</title>
+    <style>body{font-family:sans-serif;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.6;color:#222}</style>
+    </head>
+    <body>
+      <h1>Politique de confidentialité</h1>
+      <p>Cette extension Twitch collecte uniquement les informations nécessaires à son fonctionnement :</p>
+      <ul>
+        <li><strong>Identifiant anonyme Twitch (opaque_user_id)</strong> : utilisé pour empêcher de voter ou de participer plusieurs fois au même sondage/give away.</li>
+        <li><strong>Pseudo Twitch (optionnel)</strong> : uniquement si tu choisis explicitement de le partager (bouton "Partager mon pseudo"), pour pouvoir t'annoncer publiquement en cas de victoire à un give away. Tu peux refuser ce partage et continuer à voter/jouer normalement dans les autres fonctionnalités.</li>
+        <li><strong>Scores du mini-jeu</strong> : le nombre de clics que tu réalises pendant une manche, pour établir un classement temporaire.</li>
+      </ul>
+      <p>Aucune donnée n'est vendue, partagée avec des tiers, ou conservée au-delà de la durée du live / de la fonctionnalité concernée. Les données sont stockées temporairement en mémoire sur le serveur de l'extension et supprimées au redémarrage du service.</p>
+      <p>Pour toute question, contacte le développeur de cette extension via son profil Twitch.</p>
+    </body>
+    </html>
+  `);
+});
+
 app.listen(PORT, () => console.log(`EBS démarré sur le port ${PORT}`));
