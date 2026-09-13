@@ -28,8 +28,10 @@ const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
 async function kvGet(key){
   if(!UPSTASH_URL || !UPSTASH_TOKEN) return null;
   try{
-    const res = await fetch(UPSTASH_URL + '/get/' + encodeURIComponent(key), {
-      headers: { Authorization: 'Bearer ' + UPSTASH_TOKEN }
+    const res = await fetch(UPSTASH_URL, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + UPSTASH_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(['GET', key])
     });
     const data = await res.json();
     return data.result ? JSON.parse(data.result) : null;
@@ -39,11 +41,13 @@ async function kvGet(key){
 async function kvSet(key, value){
   if(!UPSTASH_URL || !UPSTASH_TOKEN) return;
   try{
-    await fetch(UPSTASH_URL + '/set/' + encodeURIComponent(key), {
+    const res = await fetch(UPSTASH_URL, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + UPSTASH_TOKEN, 'Content-Type': 'text/plain' },
-      body: JSON.stringify(value)
+      headers: { Authorization: 'Bearer ' + UPSTASH_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify(['SET', key, JSON.stringify(value)])
     });
+    const data = await res.json();
+    if(data.error) console.error('Upstash SET a répondu une erreur :', data.error);
   }catch(e){ console.error('Upstash SET erreur :', e.message); }
 }
 
@@ -100,6 +104,7 @@ function getChannel(channelId){
       bonkLegendMessage: '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆', // {name} remplacé automatiquement
       rgbEvents: false,     // contour RGB animé sur les annonces (gagnant du give away, légende du bonk...)
       rgbMinigames: false,  // contour RGB animé sur les résultats du mini-jeu
+      rgbAllPanels: false,  // contour RGB animé sur absolument tous les panneaux (sondage, profil, give away en cours...)
       donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
       donationLabel: '💜 Soutenir la chaîne', // texte affiché sur le bouton de don
       discordUrl: '',              // lien vers le Discord, affiché dans le profil viewer
@@ -345,6 +350,7 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.bonkLegendMessage !== undefined) ch.settings.bonkLegendMessage = String(s.bonkLegendMessage).slice(0, 200) || '🏆 {name} est officiellement une LÉGENDE DU BONK ! 🏆';
   if(s.rgbEvents !== undefined) ch.settings.rgbEvents = !!s.rgbEvents;
   if(s.rgbMinigames !== undefined) ch.settings.rgbMinigames = !!s.rgbMinigames;
+  if(s.rgbAllPanels !== undefined) ch.settings.rgbAllPanels = !!s.rgbAllPanels;
 
   persistSettings(req.twitch.channel_id, ch.settings);
   await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
@@ -842,4 +848,9 @@ app.get('/privacy', (req, res) => {
   `);
 });
 
-app.listen(PORT, () => console.log(`EBS démarré sur le port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`EBS démarré sur le port ${PORT}`);
+  console.log(UPSTASH_URL && UPSTASH_TOKEN
+    ? '✅ Upstash configuré — les réglages survivront aux redéploiements.'
+    : '⚠️ Upstash NON configuré — les réglages seront perdus à chaque redéploiement.');
+});
