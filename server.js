@@ -45,10 +45,16 @@ function getChannel(channelId){
         gameDefaultDuration: 15,    // durée par défaut proposée pour une manche de mini-jeu
         gameResultDisplaySec: 8,    // durée d'affichage du classement avant retour à l'écran d'accueil
         showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
-        gameTotalsAutoResetDays: 30 // reset auto du cumul mini-jeu (0 = jamais automatique)
+        gameTotalsAutoResetDays: 30,// reset auto du cumul mini-jeu (0 = jamais automatique)
+        customEmoji: '🔥',          // emoji utilisé pour le 4e bouton de réaction perso
+        bonkXpPerLevel: 20,          // xp de bonk nécessaire pour passer au niveau suivant
+        bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
+        donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
+        discordUrl: ''              // lien vers le Discord, affiché dans le profil viewer
       },
       gameTotals: new Map(),     // cumul all-time par joueur : userId -> { name, total } (ne se reset PAS entre lives)
-      gameTotalsResetAt: null    // prochaine date de reset automatique (timestamp), calculée au premier score
+      gameTotalsResetAt: null,   // prochaine date de reset automatique (timestamp), calculée au premier score
+      viewerStats: new Map()     // stats perso : userId -> { name, bonkXp, clicks:{confetti,hearts,smiley,emoji,bonk} }
     });
   }
   return channels.get(channelId);
@@ -244,6 +250,11 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
   if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
+  if(s.customEmoji !== undefined) ch.settings.customEmoji = String(s.customEmoji).slice(0, 8) || '🔥';
+  if(s.bonkXpPerLevel !== undefined) ch.settings.bonkXpPerLevel = Math.max(1, Math.min(1000, Number(s.bonkXpPerLevel) || 20));
+  if(s.bonkMaxLevel !== undefined) ch.settings.bonkMaxLevel = Math.max(1, Math.min(50, Number(s.bonkMaxLevel) || 15));
+  if(s.donationUrl !== undefined) ch.settings.donationUrl = String(s.donationUrl).slice(0, 200);
+  if(s.discordUrl !== undefined) ch.settings.discordUrl = String(s.discordUrl).slice(0, 200);
 
   await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
   res.json({ ok: true, settings: ch.settings });
@@ -540,6 +551,56 @@ app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(a
   await sendBroadcast(req.twitch.channel_id, { type: 'celebrate' });
   res.json({ ok: true });
 }));
+
+/* =========================================================
+   RÉACTIONS PERSO (boutons cliqués librement par n'importe quel
+   viewer : effet visuel local chez lui uniquement + stats perso
+   suivies côté serveur — pas de broadcast, pas de spam pour les autres)
+   ========================================================= */
+const REACTION_TYPES = ['confetti', 'hearts', 'smiley', 'emoji', 'bonk'];
+
+function getViewerStats(ch, userId, displayName){
+  let stats = ch.viewerStats.get(userId);
+  if(!stats){
+    stats = { name: displayName || 'Viewer', bonkXp: 0, clicks: { confetti:0, hearts:0, smiley:0, emoji:0, bonk:0 } };
+    ch.viewerStats.set(userId, stats);
+  }
+  if(displayName) stats.name = displayName;
+  return stats;
+}
+
+function bonkLevel(xp, xpPerLevel, maxLevel){
+  return Math.min(maxLevel, Math.floor(xp / xpPerLevel) + 1);
+}
+
+app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const { type, displayName } = req.body;
+  if(!REACTION_TYPES.includes(type)) return res.status(400).send('Type de réaction invalide');
+
+  const userId = req.twitch.user_id;
+  const stats = getViewerStats(ch, userId, displayName);
+  stats.clicks[type] = (stats.clicks[type] || 0) + 1;
+  if(type === 'bonk') stats.bonkXp += 1;
+
+  const level = bonkLevel(stats.bonkXp, ch.settings.bonkXpPerLevel, ch.settings.bonkMaxLevel);
+  res.json({ ok: true, stats: { ...stats, bonkLevel: level } });
+}));
+
+app.get('/api/mystats', verifyTwitchJWT, (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const userId = req.twitch.user_id;
+  const stats = getViewerStats(ch, userId, null);
+  const level = bonkLevel(stats.bonkXp, ch.settings.bonkXpPerLevel, ch.settings.bonkMaxLevel);
+  const totalGame = ch.gameTotals.get(userId);
+  res.json({
+    stats: { ...stats, bonkLevel: level, xpForNextLevel: ch.settings.bonkXpPerLevel },
+    gameTotal: totalGame ? totalGame.total : 0,
+    donationUrl: ch.settings.donationUrl,
+    discordUrl: ch.settings.discordUrl,
+    customEmoji: ch.settings.customEmoji
+  });
+});
 
 app.get('/', (req, res) => res.send('EBS extension Twitch — OK'));
 
