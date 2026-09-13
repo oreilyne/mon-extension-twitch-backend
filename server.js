@@ -5,8 +5,8 @@ const jwt = require('jsonwebtoken');
 const fetch = require('node-fetch');
 const tmi = require('tmi.js');
 
-const CLIENT_ID = process.env.EXTENSION_CLIENT_ID;
-const SECRET = Buffer.from(process.env.EXTENSION_SECRET, 'base64');
+const CLIENT_ID = (process.env.EXTENSION_CLIENT_ID || '').trim();
+const SECRET = Buffer.from((process.env.EXTENSION_SECRET || '').trim(), 'base64');
 const PORT = process.env.PORT || 8081;
 
 const BOT_USERNAME = process.env.TWITCH_BOT_USERNAME;
@@ -119,7 +119,8 @@ function verifyTwitchJWT(req, res, next){
     req.twitch = decoded; // { user_id, channel_id, role, opaque_user_id, ... }
     next();
   }catch(e){
-    return res.status(401).send('Token invalide');
+    console.error('JWT invalide (' + e.message + ') — longueur du secret décodé :', SECRET.length, 'octets');
+    return res.status(401).send('Token invalide : ' + e.message);
   }
 }
 
