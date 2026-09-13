@@ -47,6 +47,8 @@ function getChannel(channelId){
         showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
         gameTotalsAutoResetDays: 30,// reset auto du cumul mini-jeu (0 = jamais automatique)
         customEmoji: '🔥',          // emoji utilisé pour le 4e bouton de réaction perso
+        heartsGlyph: '❤️',          // emoji ou URL d'image pour l'effet coeurs
+        smileyGlyph: '😄',          // emoji ou URL d'image pour l'effet smiley
         bonkXpPerLevel: 20,          // xp de bonk nécessaire pour passer au niveau suivant
         bonkMaxLevel: 15,            // niveau max du marteau (pour ne pas devenir énorme)
         donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
@@ -250,7 +252,9 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
   if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
-  if(s.customEmoji !== undefined) ch.settings.customEmoji = String(s.customEmoji).slice(0, 8) || '🔥';
+  if(s.customEmoji !== undefined) ch.settings.customEmoji = String(s.customEmoji).slice(0, 300) || '🔥';
+  if(s.heartsGlyph !== undefined) ch.settings.heartsGlyph = String(s.heartsGlyph).slice(0, 300) || '❤️';
+  if(s.smileyGlyph !== undefined) ch.settings.smileyGlyph = String(s.smileyGlyph).slice(0, 300) || '😄';
   if(s.bonkXpPerLevel !== undefined) ch.settings.bonkXpPerLevel = Math.max(1, Math.min(1000, Number(s.bonkXpPerLevel) || 20));
   if(s.bonkMaxLevel !== undefined) ch.settings.bonkMaxLevel = Math.max(1, Math.min(50, Number(s.bonkMaxLevel) || 15));
   if(s.donationUrl !== undefined) ch.settings.donationUrl = String(s.donationUrl).slice(0, 200);
@@ -434,10 +438,18 @@ function clearGameTimers(ch){
   ch.gameTimers = [];
 }
 
-app.post('/api/game/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+app.post('/api/game/start', verifyTwitchJWT, safeRoute(async (req, res) => {
   const { durationSec } = req.body;
   const channelId = req.twitch.channel_id;
   const ch = getChannel(channelId);
+
+  if(ch.game && !ch.game.finished){
+    return res.status(409).send('Une manche est déjà en cours, rejoins celle-ci !');
+  }
+  if(ch.gameCooldownUntil && Date.now() < ch.gameCooldownUntil){
+    return res.status(429).send('Une nouvelle manche pourra être relancée dans quelques secondes.');
+  }
+
   const duration = Number(durationSec) || ch.settings.gameDefaultDuration;
   clearGameTimers(ch);
 
@@ -503,6 +515,7 @@ async function runGameResults(channelId){
   if(!ch.game || ch.game.finished) return; // déjà conclue (ex: bouton manuel entre-temps)
   clearGameTimers(ch);
   ch.game.finished = true;
+  ch.gameCooldownUntil = Date.now() + 8000; // 8s avant qu'une nouvelle manche puisse démarrer
 
   maybeAutoResetGameTotals(ch);
 
@@ -548,7 +561,8 @@ app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRout
    CÉLÉBRATION LIBRE (confettis à la demande)
    ========================================================= */
 app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
-  await sendBroadcast(req.twitch.channel_id, { type: 'celebrate' });
+  const effectType = ['confetti','hearts','smiley','emoji'].includes(req.body.effectType) ? req.body.effectType : 'confetti';
+  await sendBroadcast(req.twitch.channel_id, { type: 'celebrate', effectType });
   res.json({ ok: true });
 }));
 
