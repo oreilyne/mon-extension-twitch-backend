@@ -34,17 +34,28 @@ function getChannel(channelId){
   if(!channels.has(channelId)){
     channels.set(channelId, {
       poll: null,          // { question, options:[{label,votes}], voters:Set, durationSec, endsAt }
-      giveaway: null,       // { entrants:Map(userId->name), winner, command, endsAt }
+      giveaway: null,       // { entrants:Map(userId->name), winner, command, reward, endsAt }
       giveawayTimers: [],   // setTimeout ids en cours (annonces + tirage auto)
-      game: null            // { endsAt, finished, scores:Map(userId->{name,score}) }
+      game: null,           // { endsAt, finished, scores:Map(userId->{name,score}) }
+      winners: [],          // historique des gagnants du live en cours : [{name, reward}]
+      settings: {
+        countdownSeconds: 5,        // durée du compte à rebours du give away (dernières secondes)
+        giveawayResultDisplaySec: 8,// durée d'affichage du gagnant avant retour à l'écran d'accueil
+        gameDefaultDuration: 15,    // durée par défaut proposée pour une manche de mini-jeu
+        gameResultDisplaySec: 8,    // durée d'affichage du classement avant retour à l'écran d'accueil
+        showLastWinnerBadge: true   // afficher une petite bulle "dernier gagnant" sur le stream
+      }
     });
   }
   return channels.get(channelId);
 }
 
 // Comme le bot de tchat ne connaît que le NOM de la chaîne (pas son ID interne),
-// on retient ici quel channelId a le give away actif pour faire le lien entre
-// les messages du tchat (identifiés par nom de chaîne) et notre état interne.
+// on retient ici quel channelId correspond à cette chaîne pour faire le lien
+// entre les messages du tchat (identifiés par nom) et notre état interne.
+// Cette extension est conçue pour UN seul streamer par déploiement, donc ce
+// channelId est capturé automatiquement dès la première requête reçue.
+let mainChannelId = null;
 let activeGiveawayChannelId = null;
 
 /* =========================================================
@@ -60,12 +71,25 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
 
   tmiClient.on('message', (channel, tags, message, self) => {
     if(self) return; // ignore les messages envoyés par le bot lui-même
+    const text = message.trim().toLowerCase();
+
+    // Commande générale : liste des gagnants du live en cours (fonctionne
+    // même si aucun give away n'est actif au moment où on la tape)
+    if(text === '!gagnants' && mainChannelId){
+      const ch = channels.get(mainChannelId);
+      if(!ch || ch.winners.length === 0){
+        tmiSay('👀 Aucun gagnant pour le moment sur ce live !');
+      } else {
+        const list = ch.winners.map(w => `🏆${w.name} > ${w.reward}`).join('  |  ');
+        tmiSay(`Gagnants du live : ${list}`);
+      }
+      return;
+    }
+
     if(!activeGiveawayChannelId) return;
 
     const ch = channels.get(activeGiveawayChannelId);
     if(!ch || !ch.giveaway || ch.giveaway.winner) return;
-
-    const text = message.trim().toLowerCase();
     if(text !== ch.giveaway.command) return;
 
     const userId = tags['user-id'];
@@ -117,6 +141,7 @@ function verifyTwitchJWT(req, res, next){
   try{
     const decoded = jwt.verify(token, SECRET, { algorithms: ['HS256'] });
     req.twitch = decoded; // { user_id, channel_id, role, opaque_user_id, ... }
+    if(!mainChannelId) mainChannelId = decoded.channel_id;
     next();
   }catch(e){
     console.error('JWT invalide (' + e.message + ') — longueur du secret décodé :', SECRET.length, 'octets');
@@ -195,8 +220,38 @@ app.get('/api/state', verifyTwitchJWT, (req, res) => {
     leaderboard: ch.game.finished ? buildLeaderboard(ch.game) : undefined
   } : null;
 
-  res.json({ poll, giveaway, game });
+  res.json({ poll, giveaway, game, settings: ch.settings });
 });
+
+/* =========================================================
+   RÉGLAGES (configurables depuis le panneau modération de l'overlay)
+   ========================================================= */
+app.get('/api/settings', verifyTwitchJWT, (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  res.json(ch.settings);
+});
+
+app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const s = req.body || {};
+  if(s.countdownSeconds !== undefined) ch.settings.countdownSeconds = Math.max(0, Math.min(30, Number(s.countdownSeconds) || 0));
+  if(s.giveawayResultDisplaySec !== undefined) ch.settings.giveawayResultDisplaySec = Math.max(2, Math.min(60, Number(s.giveawayResultDisplaySec) || 8));
+  if(s.gameDefaultDuration !== undefined) ch.settings.gameDefaultDuration = Math.max(5, Math.min(300, Number(s.gameDefaultDuration) || 15));
+  if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
+  if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
+
+  await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
+  res.json({ ok: true, settings: ch.settings });
+}));
+
+/* =========================================================
+   HISTORIQUE DES GAGNANTS (commande !gagnants + reset entre lives)
+   ========================================================= */
+app.post('/api/winners/reset', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  ch.winners = [];
+  res.json({ ok: true });
+}));
 
 /* =========================================================
    SONDAGE
@@ -251,10 +306,11 @@ app.post('/api/poll/end', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
    GIVE AWAY
    ========================================================= */
 app.post('/api/giveaway/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
-  let { durationSec, command } = req.body;
+  let { durationSec, command, reward } = req.body;
   durationSec = Number(durationSec) || 60;
   command = (typeof command === 'string' && command.trim()) ? command.trim().toLowerCase() : '!concours';
   if(!command.startsWith('!')) command = '!' + command;
+  reward = (typeof reward === 'string' && reward.trim()) ? reward.trim().slice(0, 60) : 'un lot surprise';
 
   const channelId = req.twitch.channel_id;
   const ch = getChannel(channelId);
@@ -264,24 +320,25 @@ app.post('/api/giveaway/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRo
     entrants: new Map(),
     winner: null,
     command,
+    reward,
     endsAt: Date.now() + durationSec * 1000
   };
   activeGiveawayChannelId = channelId; // le bot de tchat sait maintenant où compter les entrées
 
-  await sendBroadcast(channelId, { type: 'giveaway_start', command });
-  tmiSay(`🎉 GIVE AWAY LANCÉ ! Tapez ${command} dans le tchat (ou cliquez "Participer" dans l'extension) pour tenter votre chance ! Tirage dans ${durationSec}s ⏳`);
+  await sendBroadcast(channelId, { type: 'giveaway_start', command, reward });
+  tmiSay(`🎉 GIVE AWAY LANCÉ ! Tapez ${command} dans le tchat (ou cliquez "Participer" dans l'extension) pour tenter de gagner : ${reward} ! Tirage dans ${durationSec}s ⏳`);
 
   // Rappel à mi-parcours si la durée le justifie
   if(durationSec > 20){
     const halfway = Math.round(durationSec / 2);
     const t1 = setTimeout(() => {
-      tmiSay(`⏳ Encore ${halfway}s pour taper ${command} et participer au give away !`);
+      tmiSay(`⏳ Encore ${halfway}s pour taper ${command} et tenter de gagner : ${reward} !`);
     }, halfway * 1000);
     ch.giveawayTimers.push(t1);
   }
 
-  // Compte à rebours dans les 10 dernières secondes
-  const countdownSeconds = Math.min(10, durationSec);
+  // Compte à rebours réglable (0 = désactivé) dans les dernières secondes
+  const countdownSeconds = Math.min(ch.settings.countdownSeconds, durationSec);
   for(let s = countdownSeconds; s >= 1; s--){
     const delay = (durationSec - s) * 1000;
     const t = setTimeout(() => {
@@ -322,10 +379,13 @@ async function runGiveawayDraw(channelId){
   if(!ch.giveaway || ch.giveaway.winner) return; // déjà tiré (ex: tirage manuel entre-temps)
   clearGiveawayTimers(ch);
 
+  const displaySec = ch.settings.giveawayResultDisplaySec;
+
   if(ch.giveaway.entrants.size === 0){
     tmiSay('😢 Personne n\'a participé au give away... on retentera une prochaine fois !');
     ch.giveaway.winner = 'personne';
     await sendBroadcast(channelId, { type: 'giveaway_winner', winnerName: null });
+    setTimeout(() => sendBroadcast(channelId, { type: 'clear_display' }), displaySec * 1000);
     return;
   }
 
@@ -333,9 +393,12 @@ async function runGiveawayDraw(channelId){
   const winnerId = ids[Math.floor(Math.random() * ids.length)];
   const winnerName = ch.giveaway.entrants.get(winnerId) || 'un·e viewer mystère';
   ch.giveaway.winner = winnerName;
+  ch.winners.push({ name: winnerName, reward: ch.giveaway.reward });
 
-  await sendBroadcast(channelId, { type: 'giveaway_winner', winnerName });
-  tmiSay(`🎉🥳🏆✨ ET LE/LA GRAND(E) GAGNANT(E) EST... 🥁🥁🥁 ${winnerName} !!! 🎉🥳🏆✨ Félicitations !! 🎊🎊`);
+  await sendBroadcast(channelId, { type: 'giveaway_winner', winnerName, reward: ch.giveaway.reward });
+  tmiSay(`🎉🥳🏆✨ ET LE/LA GRAND(E) GAGNANT(E) DE ${ch.giveaway.reward.toUpperCase()} EST... 🥁🥁🥁 ${winnerName} !!! 🎉🥳🏆✨ Félicitations !! 🎊🎊 (tape !gagnants pour revoir tous les gagnants du live)`);
+
+  setTimeout(() => sendBroadcast(channelId, { type: 'clear_display' }), displaySec * 1000);
 }
 
 // Tirage manuel (le/la modérateur·rice peut forcer le tirage avant la fin du minuteur)
@@ -352,8 +415,8 @@ app.post('/api/giveaway/draw', verifyTwitchJWT, requireBroadcasterOrMod, safeRou
    ========================================================= */
 app.post('/api/game/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
   const { durationSec } = req.body;
-  const duration = Number(durationSec) || 15;
   const ch = getChannel(req.twitch.channel_id);
+  const duration = Number(durationSec) || ch.settings.gameDefaultDuration;
   ch.game = {
     endsAt: Date.now() + duration*1000,
     finished: false,
@@ -389,15 +452,17 @@ function buildLeaderboard(game){
 }
 
 app.post('/api/game/results', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
-  const ch = getChannel(req.twitch.channel_id);
+  const channelId = req.twitch.channel_id;
+  const ch = getChannel(channelId);
   if(!ch.game) return res.status(400).send('Aucune manche à conclure');
   ch.game.finished = true;
   const leaderboard = buildLeaderboard(ch.game);
 
-  await sendBroadcast(req.twitch.channel_id, {
+  await sendBroadcast(channelId, {
     type: 'game_round_end',
     leaderboard
   });
+  setTimeout(() => sendBroadcast(channelId, { type: 'clear_display' }), ch.settings.gameResultDisplaySec * 1000);
   res.json({ ok: true, leaderboard });
 }));
 
