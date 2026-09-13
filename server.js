@@ -692,8 +692,8 @@ function bonkLevel(xp, baseXp, growth, maxLevel){
 
 app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
-  const { kind, displayName } = req.body; // kind: 'confetti' | 'reaction' | 'bonk'
-  if(!['confetti','reaction','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
+  const { kind, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
+  if(!['confetti','reactions','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
 
   const userId = req.twitch.user_id;
   const stats = getViewerStats(ch, userId, displayName);
