@@ -638,6 +638,8 @@ app.post('/api/game/totals/reset', verifyTwitchJWT, requireBroadcasterOrMod, saf
   ch.gameTotalsResetAt = ch.settings.gameTotalsAutoResetDays
     ? Date.now() + ch.settings.gameTotalsAutoResetDays * 86400000
     : null;
+  ch.game = null; // vide aussi le tableau de scores affiché (pas que le cumul)
+  await sendBroadcast(req.twitch.channel_id, { type: 'clear_display' }); // prévient tout le monde immédiatement
   res.json({ ok: true });
 }));
 
