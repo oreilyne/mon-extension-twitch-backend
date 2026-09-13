@@ -7,21 +7,49 @@ const tmi = require('tmi.js');
 const fs = require('fs');
 
 const DATA_FILE = __dirname + '/data.json';
-// ⚠️ Persistance simple sur disque : survit à un redémarrage normal du
-// service, mais PAS à un redéploiement (Render recrée le disque à chaque
-// déploiement). Pour une persistance garantie même après un déploiement,
-// il faudrait une vraie base de données externe (ex: Upstash Redis, gratuit) —
-// possible à ajouter plus tard si besoin.
+// Persistance à deux niveaux :
+// 1) Fichier local : rapide, survit à un simple redémarrage du service
+// 2) Upstash Redis (si configuré) : survit AUSSI aux redéploiements complets
 function loadPersistedSettings(){
   try{ return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); }
   catch(e){ return {}; }
 }
-function persistSettings(channelId, settings){
+function persistSettingsLocal(channelId, settings){
   try{
     const all = loadPersistedSettings();
     all[channelId] = settings;
     fs.writeFileSync(DATA_FILE, JSON.stringify(all));
-  }catch(e){ console.error('Erreur persistance réglages :', e.message); }
+  }catch(e){ console.error('Erreur persistance locale :', e.message); }
+}
+
+const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
+const UPSTASH_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+
+async function kvGet(key){
+  if(!UPSTASH_URL || !UPSTASH_TOKEN) return null;
+  try{
+    const res = await fetch(UPSTASH_URL + '/get/' + encodeURIComponent(key), {
+      headers: { Authorization: 'Bearer ' + UPSTASH_TOKEN }
+    });
+    const data = await res.json();
+    return data.result ? JSON.parse(data.result) : null;
+  }catch(e){ console.error('Upstash GET erreur :', e.message); return null; }
+}
+
+async function kvSet(key, value){
+  if(!UPSTASH_URL || !UPSTASH_TOKEN) return;
+  try{
+    await fetch(UPSTASH_URL + '/set/' + encodeURIComponent(key), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + UPSTASH_TOKEN, 'Content-Type': 'text/plain' },
+      body: JSON.stringify(value)
+    });
+  }catch(e){ console.error('Upstash SET erreur :', e.message); }
+}
+
+function persistSettings(channelId, settings){
+  persistSettingsLocal(channelId, settings);       // sauvegarde immédiate locale
+  kvSet('settings:' + channelId, settings).catch(() => {}); // sauvegarde durable externe (en tâche de fond)
 }
 
 const CLIENT_ID = (process.env.EXTENSION_CLIENT_ID || '').trim();
@@ -86,6 +114,17 @@ function getChannel(channelId){
       gameTotalsResetAt: null,   // prochaine date de reset automatique (timestamp), calculée au premier score
       viewerStats: new Map()     // stats perso : userId -> { name, bonkXp, clicks:{confetti,reactions,bonk} }
     });
+
+    // Si le fichier local n'avait rien (ex: juste après un redéploiement),
+    // on va chercher la sauvegarde durable sur Upstash en tâche de fond.
+    if(!persisted){
+      kvGet('settings:' + channelId).then(saved => {
+        if(saved){
+          const ch = channels.get(channelId);
+          if(ch) Object.assign(ch.settings, saved);
+        }
+      }).catch(() => {});
+    }
   }
   return channels.get(channelId);
 }
