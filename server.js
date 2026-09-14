@@ -246,10 +246,13 @@ async function revealPhasmoGhost(channelId, ghostName){
   const ch = getChannel(channelId);
   const winners = [];
   ch.phasmoGuesses.forEach((g, userId) => {
+    const stats = getViewerStats(ch, userId, g.name);
     if(g.ghost.toLowerCase() === ghostName.toLowerCase()){
-      const stats = getViewerStats(ch, userId, g.name);
       stats.phasmoPoints += 1;
+      stats.phasmoGhostWins[ghostName] = (stats.phasmoGhostWins[ghostName] || 0) + 1;
       winners.push(g.name);
+    } else {
+      stats.phasmoLosses += 1;
     }
   });
   const total = ch.phasmoGuesses.size;
@@ -740,6 +743,10 @@ function getViewerStats(ch, userId, displayName){
     ch.viewerStats.set(userId, stats);
   }
   if(stats.phasmoPoints === undefined) stats.phasmoPoints = 0; // pour les stats déjà créées avant cet ajout
+  if(!stats.phasmoGhostWins) stats.phasmoGhostWins = {};       // ghost -> nombre de fois trouvé
+  if(stats.phasmoJournalOpens === undefined) stats.phasmoJournalOpens = 0;
+  if(stats.phasmoClicks === undefined) stats.phasmoClicks = 0;
+  if(stats.phasmoLosses === undefined) stats.phasmoLosses = 0;
   if(displayName) stats.name = displayName;
   return stats;
 }
@@ -855,6 +862,39 @@ app.post('/api/phasmo/newround', verifyTwitchJWT, requireBroadcasterOrMod, safeR
   const ch = getChannel(req.twitch.channel_id);
   ch.phasmoGuesses.clear();
   await sendBroadcast(req.twitch.channel_id, { type: 'phasmo_newround' });
+  res.json({ ok: true });
+}));
+
+app.post('/api/phasmo/track', verifyTwitchJWT, (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const stats = getViewerStats(ch, req.twitch.user_id, req.body.displayName || null);
+  if(req.body.event === 'open') stats.phasmoJournalOpens += 1;
+  else if(req.body.event === 'click') stats.phasmoClicks += 1;
+  res.json({ ok: true });
+});
+
+app.post('/api/phasmo/debrief', verifyTwitchJWT, (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const stats = getViewerStats(ch, req.twitch.user_id, req.body.displayName || null);
+  res.json({
+    ghostWins: stats.phasmoGhostWins,
+    journalOpens: stats.phasmoJournalOpens,
+    clicks: stats.phasmoClicks,
+    losses: stats.phasmoLosses,
+    points: stats.phasmoPoints
+  });
+});
+
+app.post('/api/phasmo/resetstats', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  ch.viewerStats.forEach(stats => {
+    stats.phasmoGhostWins = {};
+    stats.phasmoJournalOpens = 0;
+    stats.phasmoClicks = 0;
+    stats.phasmoLosses = 0;
+    stats.phasmoPoints = 0;
+  });
+  await sendBroadcast(req.twitch.channel_id, { type: 'phasmo_stats_reset' });
   res.json({ ok: true });
 }));
 
