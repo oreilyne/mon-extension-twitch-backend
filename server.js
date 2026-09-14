@@ -122,7 +122,8 @@ function getChannel(channelId){
       settings: persisted ? { ...defaultSettings, ...persisted } : defaultSettings,
       gameTotals: new Map(),     // cumul all-time par joueur : userId -> { name, total } (ne se reset PAS entre lives)
       gameTotalsResetAt: null,   // prochaine date de reset automatique (timestamp), calculée au premier score
-      viewerStats: new Map()     // stats perso : userId -> { name, bonkXp, clicks:{confetti,reactions,bonk} }
+      viewerStats: new Map(),    // stats perso : userId -> { name, bonkXp, phasmoPoints, clicks:{confetti,reactions,bonk} }
+      phasmoGuesses: new Map()   // pronostics en cours : userId -> { name, ghost } (vidé à chaque révélation/nouvelle partie)
     });
 
     // Si le fichier local n'avait rien (ex: juste après un redéploiement),
@@ -175,6 +176,32 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
       return;
     }
 
+    // !guesslist : pourcentages des pronostics en cours, ouvert à tout le monde
+    if(text === '!guesslist' && mainChannelId){
+      const ch = channels.get(mainChannelId);
+      const total = ch ? ch.phasmoGuesses.size : 0;
+      if(!total){
+        tmiSay('🔮 Personne n\'a encore pronostiqué de fantôme !');
+      } else {
+        const counts = {};
+        ch.phasmoGuesses.forEach(g => { counts[g.ghost] = (counts[g.ghost] || 0) + 1; });
+        const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,5);
+        const txt = sorted.map(([ghost,c]) => `${ghost} ${Math.round(c/total*100)}%`).join(' · ');
+        tmiSay(`🔮 Pronostics (${total}) : ${txt}`);
+      }
+      return;
+    }
+
+    // !<nomdufantome> : révèle la réponse et distribue les points — modo/streamer uniquement
+    const isModOrBroadcaster = tags.mod || (tags.badges && tags.badges.broadcaster === '1');
+    if(isModOrBroadcaster && mainChannelId && text.startsWith('!')){
+      const alias = text.slice(1);
+      if(PHASMO_ALIASES[alias]){
+        revealPhasmoGhost(mainChannelId, PHASMO_ALIASES[alias]).catch(err => console.error('Erreur révélation Phasmo :', err));
+        return;
+      }
+    }
+
     if(!activeGiveawayChannelId) return;
 
     const ch = channels.get(activeGiveawayChannelId);
@@ -199,6 +226,45 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
 function tmiSay(message){
   if(!tmiClient || !CHANNEL_LOGIN) return;
   tmiClient.say('#' + CHANNEL_LOGIN, message).catch(err => console.error('Erreur envoi tchat :', err));
+}
+
+/* =========================================================
+   PRONOSTICS PHASMOPHOBIA — !<nomdufantome> par un modo/streamer
+   révèle la réponse, distribue les points, et vide la liste.
+   ========================================================= */
+const PHASMO_ALIASES = {
+  banshee:'Banshee', demon:'Demon', deogen:'Deogen', goryo:'Goryo', hantu:'Hantu',
+  jinn:'Jinn', mare:'Mare', moroi:'Moroi', myling:'Myling', obake:'Obake', oni:'Oni',
+  onryo:'Onryo', phantom:'Phantom', poltergeist:'Poltergeist', raiju:'Raiju',
+  revenant:'Revenant', shade:'Shade', spirit:'Spirit', thaye:'Thaye',
+  mimic:'The Mimic', themimic:'The Mimic', twins:'The Twins', thetwins:'The Twins',
+  wraith:'Wraith', yokai:'Yokai', yurei:'Yurei', dayan:'Dayan', gallu:'Gallu',
+  obambo:'Obambo', kormos:'Kormos', aswang:'Aswang'
+};
+
+async function revealPhasmoGhost(channelId, ghostName){
+  const ch = getChannel(channelId);
+  const winners = [];
+  ch.phasmoGuesses.forEach((g, userId) => {
+    if(g.ghost.toLowerCase() === ghostName.toLowerCase()){
+      const stats = getViewerStats(ch, userId, g.name);
+      stats.phasmoPoints += 1;
+      winners.push(g.name);
+    }
+  });
+  const total = ch.phasmoGuesses.size;
+  ch.phasmoGuesses.clear(); // prête pour une nouvelle partie tout de suite
+
+  await sendBroadcast(channelId, { type: 'phasmo_reveal', ghost: ghostName, winners, total });
+
+  if(winners.length === 0){
+    tmiSay(`👻 C'était ${ghostName} ! Personne n'avait trouvé sur ${total} pronostic${total>1?'s':''}.`);
+  } else if(winners.length <= 8){
+    tmiSay(`👻 C'était ${ghostName} ! Bravo à ${winners.join(', ')} qui remportent un point ! 🎉`);
+  } else {
+    tmiSay(`👻 C'était ${ghostName} ! Bravo aux ${winners.length} personnes qui avaient trouvé ! 🎉`);
+  }
+  return { winners, total };
 }
 
 function clearGiveawayTimers(ch){
@@ -670,9 +736,10 @@ app.post('/api/celebrate', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(a
 function getViewerStats(ch, userId, displayName){
   let stats = ch.viewerStats.get(userId);
   if(!stats){
-    stats = { name: displayName || 'Viewer', bonkXp: 0, clicks: { confetti:0, reactions:0, bonk:0 } };
+    stats = { name: displayName || 'Viewer', bonkXp: 0, phasmoPoints: 0, clicks: { confetti:0, reactions:0, bonk:0 } };
     ch.viewerStats.set(userId, stats);
   }
+  if(stats.phasmoPoints === undefined) stats.phasmoPoints = 0; // pour les stats déjà créées avant cet ajout
   if(displayName) stats.name = displayName;
   return stats;
 }
@@ -757,6 +824,37 @@ app.post('/api/bonk/legend', verifyTwitchJWT, safeRoute(async (req, res) => {
 
   await sendBroadcast(channelId, { type: 'bonk_legend', name, message });
   tmiSay('🔨👑 ' + message);
+  res.json({ ok: true });
+}));
+
+/* =========================================================
+   PRONOSTICS PHASMOPHOBIA — routes HTTP
+   ========================================================= */
+app.post('/api/phasmo/guess', verifyTwitchJWT, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const ghost = (typeof req.body.ghost === 'string' && req.body.ghost.trim()) ? req.body.ghost.trim().slice(0, 40) : null;
+  if(!ghost) return res.status(400).send('Fantôme manquant');
+  const displayName = (typeof req.body.displayName === 'string' && req.body.displayName.trim()) ? req.body.displayName.trim().slice(0,40) : 'Joueur·se mystère';
+  ch.phasmoGuesses.set(req.twitch.user_id, { name: displayName, ghost });
+  res.json({ ok: true, ghost });
+}));
+
+app.post('/api/phasmo/percentages', verifyTwitchJWT, (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  const total = ch.phasmoGuesses.size;
+  const myGuess = ch.phasmoGuesses.get(req.twitch.user_id) || null;
+  const counts = {};
+  ch.phasmoGuesses.forEach(g => { counts[g.ghost] = (counts[g.ghost] || 0) + 1; });
+  const breakdown = Object.entries(counts)
+    .map(([ghost, count]) => ({ ghost, count, pct: Math.round(count/total*100) }))
+    .sort((a,b) => b.count - a.count);
+  res.json({ total, breakdown, myGuess: myGuess ? myGuess.ghost : null });
+});
+
+app.post('/api/phasmo/newround', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  const ch = getChannel(req.twitch.channel_id);
+  ch.phasmoGuesses.clear();
+  await sendBroadcast(req.twitch.channel_id, { type: 'phasmo_newround' });
   res.json({ ok: true });
 }));
 
