@@ -65,7 +65,7 @@ const BOT_USERNAME = process.env.TWITCH_BOT_USERNAME;
 const BOT_OAUTH_TOKEN = process.env.TWITCH_BOT_OAUTH_TOKEN; // format: oauth:xxxxxxxx
 const CHANNEL_LOGIN = process.env.TWITCH_CHANNEL_LOGIN;     // ex: "oreilyne" (minuscules, sans #)
 
-// TEMPORAIRE : pendant Local/Hosted Test, Twitch ne renvoie pas toujours le
+// TEMPORAIRE : durant Local/Hosted Test, Twitch ne renvoie pas toujours le
 // vrai rôle "moderator" pour les comptes testeurs (bug connu côté Twitch,
 // corrigé une fois l'extension publiée). Comme seuls les comptes que tu as
 // explicitement autorisés peuvent voir l'extension à ce stade, on désactive
@@ -96,7 +96,7 @@ function getChannel(channelId){
         { glyph: '😄', speed: 2.2 },
         { glyph: '🔥', speed: 2.2 }
       ],
-      confettiSpeed: 2.2,          // vitesse propre aux confettis (indépendante des autres réactions)
+      confettiSpeed: 2.2,          // vitesse propre aux confettis (autonome par rapport aux autres réactions)
       profileMessage: '',          // texte libre affiché dans le profil des viewers (accueil)
       bonkBaseXp: 15,               // xp nécessaire pour passer du niveau 1 au niveau 2
       bonkGrowth: 1.4,              // à quel point chaque niveau demande plus d'xp que le précédent (1 = plat, 2 = très raide)
@@ -790,7 +790,7 @@ app.post('/api/update-name', verifyTwitchJWT, safeRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Contournement : pendant Local/Hosted Test, Twitch confirme parfois le lien
+// Contournement : durant Local/Hosted Test, Twitch confirme parfois le lien
 // d'identité (isLinked=true) sans jamais transmettre le displayName au
 // frontend. Comme l'ID du viewer devient son vrai ID Twitch numérique une
 // fois lié, on peut aller chercher son pseudo nous-mêmes via l'API Twitch.
@@ -979,7 +979,7 @@ app.get('/privacy', (req, res) => {
       <ul>
         <li><strong>Identifiant anonyme Twitch (opaque_user_id)</strong> : utilisé pour empêcher de voter ou de participer plusieurs fois au même sondage/give away.</li>
         <li><strong>Pseudo Twitch (optionnel)</strong> : uniquement si tu choisis explicitement de le partager (bouton "Partager mon pseudo"), pour pouvoir t'annoncer publiquement en cas de victoire à un give away. Tu peux refuser ce partage et continuer à voter/jouer normalement dans les autres fonctionnalités.</li>
-        <li><strong>Scores du mini-jeu</strong> : le nombre de clics que tu réalises pendant une manche, pour établir un classement temporaire.</li>
+        <li><strong>Scores du mini-jeu</strong> : le nombre de clics que tu réalises durant une manche, pour établir un classement temporaire.</li>
       </ul>
       <p>Aucune donnée n'est vendue, partagée avec des tiers, ou conservée au-delà de la durée du live / de la fonctionnalité concernée. Les données sont stockées temporairement en mémoire sur le serveur de l'extension et supprimées au redémarrage du service.</p>
       <p>Pour toute question, contacte le développeur de cette extension via son profil Twitch.</p>
