@@ -625,9 +625,10 @@ app.post('/api/game/start', verifyTwitchJWT, safeRoute(async (req, res) => {
     durationSec: duration
   });
 
-  // Fin automatique : on laisse 1,5s de marge après le minuteur pour laisser
-  // le temps aux derniers scores des viewers d'arriver au serveur.
-  const t = setTimeout(() => runGameResults(channelId), (duration + 1.5) * 1000);
+  // Fin automatique : on laisse une toute petite marge après le minuteur
+  // pour laisser le temps aux derniers scores des viewers d'arriver au
+  // serveur, sans pour autant créer un temps mort perceptible à 0 seconde.
+  const t = setTimeout(() => runGameResults(channelId), (duration + 0.4) * 1000);
   ch.gameTimers.push(t);
 
   res.json({ ok: true });
