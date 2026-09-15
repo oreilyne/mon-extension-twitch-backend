@@ -114,6 +114,7 @@ function getChannel(channelId){
 
     channels.set(channelId, {
       poll: null,          // { question, options:[{label,votes}], voters:Set, durationSec, endsAt }
+      pollTimer: null,     // setTimeout id de la fin automatique du sondage
       giveaway: null,       // { entrants:Map(userId->name), winner, command, reward, endsAt }
       giveawayTimers: [],   // setTimeout ids en cours (annonces + tirage auto)
       game: null,           // { endsAt, finished, scores:Map(userId->{name,score}) }
@@ -467,16 +468,38 @@ app.post('/api/poll/start', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(
     return res.status(400).send('Question + 2 à 4 options requises');
   }
   const ch = getChannel(req.twitch.channel_id);
+  clearTimeout(ch.pollTimer);
+  const endsAt = durationSec ? Date.now() + durationSec*1000 : null;
   ch.poll = {
     question,
     options: options.map(label => ({ label, votes: 0 })),
     voters: new Map(),
-    endsAt: durationSec ? Date.now() + durationSec*1000 : null
+    endsAt
   };
   await sendBroadcast(req.twitch.channel_id, {
     type: 'poll_start',
-    poll: { question, options: ch.poll.options }
+    poll: { question, options: ch.poll.options, endsAt }
   });
+  if(durationSec){
+    ch.pollTimer = setTimeout(() => endPoll(req.twitch.channel_id), durationSec*1000);
+  }
+  res.json({ ok: true });
+}));
+
+async function endPoll(channelId){
+  const ch = getChannel(channelId);
+  if(!ch.poll) return;
+  clearTimeout(ch.pollTimer);
+  const total = ch.poll.options.reduce((s,o) => s + o.votes, 0) || 1;
+  const results = ch.poll.options
+    .map(o => ({ label:o.label, votes:o.votes, pct:Math.round(o.votes/total*100) }))
+    .sort((a,b) => b.votes - a.votes);
+  ch.poll = null;
+  await sendBroadcast(channelId, { type: 'poll_end', results });
+}
+
+app.post('/api/poll/end', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
+  await endPoll(req.twitch.channel_id);
   res.json({ ok: true });
 }));
 
@@ -497,13 +520,6 @@ app.post('/api/poll/vote', verifyTwitchJWT, safeRoute(async (req, res) => {
     type: 'poll_update',
     options: ch.poll.options
   });
-  res.json({ ok: true });
-}));
-
-app.post('/api/poll/end', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
-  const ch = getChannel(req.twitch.channel_id);
-  ch.poll = null;
-  await sendBroadcast(req.twitch.channel_id, { type: 'poll_end' });
   res.json({ ok: true });
 }));
 
