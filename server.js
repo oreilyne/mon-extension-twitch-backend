@@ -232,15 +232,37 @@ function tmiSay(message){
    PRONOSTICS PHASMOPHOBIA — !<nomdufantome> par un modo/streamer
    révèle la réponse, distribue les points, et vide la liste.
    ========================================================= */
-const PHASMO_ALIASES = {
-  banshee:'Banshee', demon:'Demon', deogen:'Deogen', goryo:'Goryo', hantu:'Hantu',
-  jinn:'Jinn', mare:'Mare', moroi:'Moroi', myling:'Myling', obake:'Obake', oni:'Oni',
-  onryo:'Onryo', phantom:'Phantom', poltergeist:'Poltergeist', raiju:'Raiju',
-  revenant:'Revenant', shade:'Shade', spirit:'Spirit', thaye:'Thaye',
-  mimic:'The Mimic', themimic:'The Mimic', twins:'The Twins', thetwins:'The Twins',
-  wraith:'Wraith', yokai:'Yokai', yurei:'Yurei', dayan:'Dayan', gallu:'Gallu',
-  obambo:'Obambo', kormos:'Kormos', aswang:'Aswang'
+// Nom français affiché pour chaque fantôme (doit rester synchronisé avec
+// PHASMO_GHOSTS.nameFr côté frontend, dans app.js).
+const PHASMO_NAME_FR = {
+  Banshee:'Banshee', Demon:'Démon', Deogen:'Deogen', Goryo:'Goryo', Hantu:'Hantu',
+  Jinn:'Djinn', Mare:'Cauchemar', Moroi:'Moroï', Myling:'Myling', Obake:'Obake', Oni:'Oni',
+  Onryo:'Onryo', Phantom:'Fantôme', Poltergeist:'Poltergeist', Raiju:'Raiju',
+  Revenant:'Revenant', Shade:'Ombre', Spirit:'Esprit', Thaye:'Thayé',
+  'The Mimic':'Le Mimic', 'The Twins':'Les Jumeaux',
+  Wraith:'Spectre', Yokai:'Yokai', Yurei:'Yurei', Dayan:'Dayan', Gallu:'Gallu',
+  Obambo:'Obambo', Kormos:'Kormos', Aswang:'Aswang', Deildegast:'Deildegast'
 };
+
+function stripAccents(str){
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// Construit toutes les variantes d'alias possibles pour une commande de tchat
+// à partir du nom français : avec/sans accents, avec/sans article ("le"/"les"),
+// espaces retirés — pour que la streameuse puisse taper la commande sans se
+// soucier des accents ou de l'article.
+const PHASMO_ALIASES = {};
+Object.entries(PHASMO_NAME_FR).forEach(([englishKey, nameFr]) => {
+  const noSpaces = nameFr.replace(/\s+/g, '').toLowerCase();
+  const noArticle = nameFr.replace(/^(le|les)\s+/i, '').replace(/\s+/g, '').toLowerCase();
+  const variants = new Set([
+    noSpaces, stripAccents(noSpaces),
+    noArticle, stripAccents(noArticle)
+  ]);
+  variants.forEach(v => { if(v) PHASMO_ALIASES[v] = englishKey; });
+});
+
 
 async function revealPhasmoGhost(channelId, ghostName){
   const ch = getChannel(channelId);
