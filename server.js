@@ -429,7 +429,7 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
   if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
   const VALID_PARTICLE_EFFECTS = ['rain','rainInverted','explosion','scatter','stickerzoom','stickerturn','heartbeat','stars','heart'];
-  const VALID_ZOOM_SIZES = ['small','medium','large'];
+  const VALID_ZOOM_SIZES = ['small','medium','large','giant','huge'];
   if(Array.isArray(s.reactions)){
     ch.settings.reactions = s.reactions
       .slice(0, 10)
