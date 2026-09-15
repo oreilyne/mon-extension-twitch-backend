@@ -186,7 +186,7 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
         const counts = {};
         ch.phasmoGuesses.forEach(g => { counts[g.ghost] = (counts[g.ghost] || 0) + 1; });
         const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,5);
-        const txt = sorted.map(([ghost,c]) => `${ghost} ${Math.round(c/total*100)}%`).join(' · ');
+        const txt = sorted.map(([ghost,c]) => `${PHASMO_NAME_FR[ghost] || ghost} ${Math.round(c/total*100)}%`).join(' · ');
         tmiSay(`🔮 Pronostics (${total}) : ${txt}`);
       }
       return;
@@ -282,12 +282,13 @@ async function revealPhasmoGhost(channelId, ghostName){
 
   await sendBroadcast(channelId, { type: 'phasmo_reveal', ghost: ghostName, winners, total });
 
+  const ghostNameFr = PHASMO_NAME_FR[ghostName] || ghostName;
   if(winners.length === 0){
-    tmiSay(`👻 C'était ${ghostName} ! Personne n'avait trouvé sur ${total} pronostic${total>1?'s':''}.`);
+    tmiSay(`👻 C'était ${ghostNameFr} ! Personne n'avait trouvé sur ${total} pronostic${total>1?'s':''}.`);
   } else if(winners.length <= 8){
-    tmiSay(`👻 C'était ${ghostName} ! Bravo à ${winners.join(', ')} qui remportent un point ! 🎉`);
+    tmiSay(`👻 C'était ${ghostNameFr} ! Bravo à ${winners.join(', ')} qui remportent un point ! 🎉`);
   } else {
-    tmiSay(`👻 C'était ${ghostName} ! Bravo aux ${winners.length} personnes qui avaient trouvé ! 🎉`);
+    tmiSay(`👻 C'était ${ghostNameFr} ! Bravo aux ${winners.length} personnes qui avaient trouvé ! 🎉`);
   }
   return { winners, total };
 }
@@ -791,7 +792,7 @@ function bonkLevel(xp, baseXp, growth, maxLevel){
 
 app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
-  const { kind, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
+  const { kind, glyph, speed, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
   if(!['confetti','reactions','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
 
   const userId = req.twitch.user_id;
@@ -801,6 +802,11 @@ app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
 
   const level = bonkLevel(stats.bonkXp, ch.settings.bonkBaseXp, ch.settings.bonkGrowth, ch.settings.bonkMaxLevel);
   res.json({ ok: true, stats: { ...stats, bonkLevel: level } });
+
+  // Diffuse la réaction à tout le monde (y compris la personne qui vient de
+  // cliquer) — c'est justement ce qui manquait : avant, seuls les points
+  // étaient enregistrés, mais personne d'autre ne voyait jamais l'effet.
+  sendBroadcast(req.twitch.channel_id, { type:'reaction', kind, glyph: glyph || null, speed: speed || null }).catch(err => console.error('Erreur diffusion réaction :', err));
 }));
 
 // Pousse immédiatement le vrai pseudo dès qu'un viewer partage son identité
