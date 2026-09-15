@@ -178,7 +178,7 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
     }
 
     // !guesslist (+ variantes) : pourcentages des pronostics en cours, ouvert à tout le monde
-    if(['!guesslist','!prono','!pronostics','!pronostiques','!pronostique'].includes(text) && mainChannelId){
+    if(['!guesslist','!prono','!pronostics','!pronostic','!pronostiques','!pronostique'].includes(text) && mainChannelId){
       const ch = channels.get(mainChannelId);
       const total = ch ? ch.phasmoGuesses.size : 0;
       if(!total){
