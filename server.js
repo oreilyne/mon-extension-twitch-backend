@@ -87,6 +87,7 @@ function getChannel(channelId){
     const defaultSettings = {
       countdownSeconds: 5,        // durée du compte à rebours du give away (dernières secondes)
       giveawayResultDisplaySec: 8,// durée d'affichage du gagnant avant retour à l'écran d'accueil
+      pollResultDisplaySec: 8,    // durée d'affichage des résultats du sondage avant retour à l'écran d'accueil
       gameDefaultDuration: 15,    // durée par défaut proposée pour une manche de mini-jeu
       gameResultDisplaySec: 8,    // durée d'affichage du classement avant retour à l'écran d'accueil
       showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
@@ -97,6 +98,8 @@ function getChannel(channelId){
         { glyph: '🔥', speed: 2.2 }
       ],
       confettiSpeed: 2.2,          // vitesse propre aux confettis (autonome par rapport aux autres réactions)
+      reactionParticleCount: 26,   // nombre de particules envoyées par clic sur une réaction (emoji)
+      reactionDurationSec: 2.5,    // durée de vie des particules à l'écran (secondes)
       profileMessage: '',          // texte libre affiché dans le profil des viewers (accueil)
       bonkBaseXp: 15,               // xp nécessaire pour passer du niveau 1 au niveau 2
       bonkGrowth: 1.4,              // à quel point chaque niveau demande plus d'xp que le précédent (1 = plat, 2 = très raide)
@@ -419,6 +422,7 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   const s = req.body || {};
   if(s.countdownSeconds !== undefined) ch.settings.countdownSeconds = Math.max(0, Math.min(30, Number(s.countdownSeconds) || 0));
   if(s.giveawayResultDisplaySec !== undefined) ch.settings.giveawayResultDisplaySec = Math.max(2, Math.min(60, Number(s.giveawayResultDisplaySec) || 8));
+  if(s.pollResultDisplaySec !== undefined) ch.settings.pollResultDisplaySec = Math.max(2, Math.min(60, Number(s.pollResultDisplaySec) || 8));
   if(s.gameDefaultDuration !== undefined) ch.settings.gameDefaultDuration = Math.max(5, Math.min(300, Number(s.gameDefaultDuration) || 15));
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
@@ -433,6 +437,8 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
       .filter(r => r.glyph);
   }
   if(s.confettiSpeed !== undefined) ch.settings.confettiSpeed = Math.max(0.3, Math.min(5, Number(s.confettiSpeed) || 2.2));
+  if(s.reactionParticleCount !== undefined) ch.settings.reactionParticleCount = Math.max(1, Math.min(150, Number(s.reactionParticleCount) || 26));
+  if(s.reactionDurationSec !== undefined) ch.settings.reactionDurationSec = Math.max(0.5, Math.min(10, Number(s.reactionDurationSec) || 2.5));
   if(s.profileMessage !== undefined) ch.settings.profileMessage = String(s.profileMessage).slice(0, 500);
   if(s.bonkBaseXp !== undefined) ch.settings.bonkBaseXp = Math.max(1, Math.min(1000, Number(s.bonkBaseXp) || 15));
   if(s.bonkGrowth !== undefined) ch.settings.bonkGrowth = Math.max(1, Math.min(3, Number(s.bonkGrowth) || 1.4));
