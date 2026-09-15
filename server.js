@@ -99,6 +99,7 @@ function getChannel(channelId){
       ],
       confettiSpeed: 2.2,          // vitesse propre aux confettis (autonome par rapport aux autres réactions)
       confettiParticleCount: 80,   // nombre de particules envoyées pour les confettis
+      reactionsEnabled: true,      // si false, les viewers ne peuvent plus utiliser les réactifs (mods toujours autorisés)
       confettiDurationSec: 2.5,    // durée de vie des confettis à l'écran (secondes)
       profileMessage: '',          // texte libre affiché dans le profil des viewers (accueil)
       bonkBaseXp: 15,               // xp nécessaire pour passer du niveau 1 au niveau 2
@@ -447,6 +448,7 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   }
   if(s.confettiSpeed !== undefined) ch.settings.confettiSpeed = Math.max(0.3, Math.min(5, Number(s.confettiSpeed) || 2.2));
   if(s.confettiParticleCount !== undefined) ch.settings.confettiParticleCount = Math.max(1, Math.min(300, Number(s.confettiParticleCount) || 80));
+  if(s.reactionsEnabled !== undefined) ch.settings.reactionsEnabled = !!s.reactionsEnabled;
   if(s.confettiDurationSec !== undefined) ch.settings.confettiDurationSec = Math.max(0.5, Math.min(15, Number(s.confettiDurationSec) || 2.5));
   if(s.profileMessage !== undefined) ch.settings.profileMessage = String(s.profileMessage).slice(0, 500);
   if(s.bonkBaseXp !== undefined) ch.settings.bonkBaseXp = Math.max(1, Math.min(1000, Number(s.bonkBaseXp) || 15));
@@ -833,6 +835,10 @@ app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
   const { kind, glyph, speed, effect, particleCount, durationSec, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
   if(!['confetti','reactions','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
+  const isModOrBroadcaster = req.twitch.role === 'broadcaster' || req.twitch.role === 'moderator';
+  if(kind === 'reactions' && ch.settings.reactionsEnabled === false && !isModOrBroadcaster){
+    return res.status(403).send('Réactifs désactivés par la streameuse');
+  }
 
   const userId = req.twitch.user_id;
   const stats = getViewerStats(ch, userId, displayName);
