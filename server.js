@@ -428,7 +428,8 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
   if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
-  const VALID_PARTICLE_EFFECTS = ['rain','explosion','scatter','edges','collision','stickerzoom','stickerturn'];
+  const VALID_PARTICLE_EFFECTS = ['rain','rainInverted','explosion','scatter','stickerzoom','stickerturn','heartbeat','stars','heart'];
+  const VALID_ZOOM_SIZES = ['small','medium','large'];
   if(Array.isArray(s.reactions)){
     ch.settings.reactions = s.reactions
       .slice(0, 10)
@@ -441,7 +442,12 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
           speed: Math.max(0.3, Math.min(5, Number(r && r.speed) || 2.2)),
           effects: effects.length ? effects : ['rain'],
           particleCount: Math.max(1, Math.min(150, Number(r && r.particleCount) || 26)),
-          durationSec: Math.max(0.5, Math.min(10, Number(r && r.durationSec) || 2.5))
+          durationSec: Math.max(0.5, Math.min(10, Number(r && r.durationSec) || 2.5)),
+          bounce: !!(r && r.bounce),
+          collide: !!(r && r.collide),
+          zoomSize: VALID_ZOOM_SIZES.includes(r && r.zoomSize) ? r.zoomSize : 'medium',
+          turnSpeed: Math.max(0.3, Math.min(5, Number(r && r.turnSpeed) || 2.2)),
+          turnDirection: (r && r.turnDirection === 'ccw') ? 'ccw' : 'cw'
         };
       })
       .filter(r => r.glyph);
@@ -833,7 +839,7 @@ function bonkLevel(xp, baseXp, growth, maxLevel){
 
 app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
-  const { kind, glyph, speed, effect, particleCount, durationSec, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
+  const { kind, glyph, speed, effect, particleCount, durationSec, bounce, collide, zoomSize, turnSpeed, turnDirection, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
   if(!['confetti','reactions','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
   const isModOrBroadcaster = req.twitch.role === 'broadcaster' || req.twitch.role === 'moderator';
   if(kind === 'reactions' && ch.settings.reactionsEnabled === false && !isModOrBroadcaster){
@@ -854,7 +860,12 @@ app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   // L'effet et les réglages de particules sont choisis UNE FOIS par la
   // personne qui clique puis relayés tels quels, pour que tout le monde
   // voie exactement le même rendu.
-  sendBroadcast(req.twitch.channel_id, { type:'reaction', kind, glyph: glyph || null, speed: speed || null, effect: effect || null, particleCount: particleCount || null, durationSec: durationSec || null }).catch(err => console.error('Erreur diffusion réaction :', err));
+  sendBroadcast(req.twitch.channel_id, {
+    type:'reaction', kind, glyph: glyph || null, speed: speed || null, effect: effect || null,
+    particleCount: particleCount || null, durationSec: durationSec || null,
+    bounce: !!bounce, collide: !!collide,
+    zoomSize: zoomSize || null, turnSpeed: turnSpeed || null, turnDirection: turnDirection || null
+  }).catch(err => console.error('Erreur diffusion réaction :', err));
 }));
 
 // Pousse immédiatement le vrai pseudo dès qu'un viewer partage son identité
