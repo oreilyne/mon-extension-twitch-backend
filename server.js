@@ -108,7 +108,8 @@ function getChannel(channelId){
       donationUrl: '',            // lien vers la page de don, affiché dans le profil viewer
       donationLabel: '💜 Soutenir la chaîne', // texte affiché sur le bouton de don
       discordUrl: '',              // lien vers le Discord, affiché dans le profil viewer
-      discordLabel: '💬 Rejoindre le Discord' // texte affiché sur le bouton Discord
+      discordLabel: '💬 Rejoindre le Discord', // texte affiché sur le bouton Discord
+      channelWhitelist: []        // pseudos Twitch exacts autorisés à voir l'onglet "Chaîne" du panneau modo, en plus de la streameuse (ex : lead mods)
     };
     const persisted = loadPersistedSettings()[channelId];
 
@@ -444,6 +445,15 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.rgbEvents !== undefined) ch.settings.rgbEvents = !!s.rgbEvents;
   if(s.rgbMinigames !== undefined) ch.settings.rgbMinigames = !!s.rgbMinigames;
   if(s.rgbAllPanels !== undefined) ch.settings.rgbAllPanels = !!s.rgbAllPanels;
+  // Réservé exclusivement à la streameuse elle-même — même un modérateur ne
+  // peut pas modifier cette liste via cette route, pour éviter qu'un mod
+  // s'accorde (ou accorde à quelqu'un d'autre) l'accès à l'onglet "Chaîne".
+  if(Array.isArray(s.channelWhitelist) && req.twitch.role === 'broadcaster'){
+    ch.settings.channelWhitelist = s.channelWhitelist
+      .map(name => String(name).trim().slice(0, 40))
+      .filter(Boolean)
+      .slice(0, 30);
+  }
 
   persistSettings(req.twitch.channel_id, ch.settings);
   await sendBroadcast(req.twitch.channel_id, { type: 'settings_update', settings: ch.settings });
