@@ -93,13 +93,15 @@ function getChannel(channelId){
       showLastWinnerBadge: true,  // afficher une petite bulle "dernier gagnant" sur le stream
       gameTotalsAutoResetDays: 30,// reset auto du cumul mini-jeu (0 = jamais automatique)
       reactions: [                // liste illimitée de boutons de réaction (hors confettis et bonk, fixes)
-        { glyph: '❤️', speed: 2.2 },
-        { glyph: '😄', speed: 2.2 },
-        { glyph: '🔥', speed: 2.2 }
+        { glyph: '❤️', speed: 2.2, effects: ['rain'] },
+        { glyph: '😄', speed: 2.2, effects: ['rain'] },
+        { glyph: '🔥', speed: 2.2, effects: ['rain'] }
       ],
       confettiSpeed: 2.2,          // vitesse propre aux confettis (autonome par rapport aux autres réactions)
       reactionParticleCount: 26,   // nombre de particules envoyées par clic sur une réaction (emoji)
       reactionDurationSec: 2.5,    // durée de vie des particules à l'écran (secondes)
+      confettiParticleCount: 80,   // nombre de particules envoyées pour les confettis
+      confettiDurationSec: 2.5,    // durée de vie des confettis à l'écran (secondes)
       profileMessage: '',          // texte libre affiché dans le profil des viewers (accueil)
       bonkBaseXp: 15,               // xp nécessaire pour passer du niveau 1 au niveau 2
       bonkGrowth: 1.4,              // à quel point chaque niveau demande plus d'xp que le précédent (1 = plat, 2 = très raide)
@@ -427,18 +429,27 @@ app.post('/api/settings', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(as
   if(s.gameResultDisplaySec !== undefined) ch.settings.gameResultDisplaySec = Math.max(2, Math.min(60, Number(s.gameResultDisplaySec) || 8));
   if(s.showLastWinnerBadge !== undefined) ch.settings.showLastWinnerBadge = !!s.showLastWinnerBadge;
   if(s.gameTotalsAutoResetDays !== undefined) ch.settings.gameTotalsAutoResetDays = Math.max(0, Math.min(365, Number(s.gameTotalsAutoResetDays) || 0));
+  const VALID_PARTICLE_EFFECTS = ['rain','explosion','scatter','edges','collision','stickerzoom','stickerturn'];
   if(Array.isArray(s.reactions)){
     ch.settings.reactions = s.reactions
       .slice(0, 10)
-      .map(r => ({
-        glyph: String((r && r.glyph) || '').slice(0, 300),
-        speed: Math.max(0.3, Math.min(5, Number(r && r.speed) || 2.2))
-      }))
+      .map(r => {
+        const effects = Array.isArray(r && r.effects)
+          ? r.effects.filter(e => VALID_PARTICLE_EFFECTS.includes(e)).slice(0, 4)
+          : [];
+        return {
+          glyph: String((r && r.glyph) || '').slice(0, 300),
+          speed: Math.max(0.3, Math.min(5, Number(r && r.speed) || 2.2)),
+          effects: effects.length ? effects : ['rain']
+        };
+      })
       .filter(r => r.glyph);
   }
   if(s.confettiSpeed !== undefined) ch.settings.confettiSpeed = Math.max(0.3, Math.min(5, Number(s.confettiSpeed) || 2.2));
   if(s.reactionParticleCount !== undefined) ch.settings.reactionParticleCount = Math.max(1, Math.min(150, Number(s.reactionParticleCount) || 26));
   if(s.reactionDurationSec !== undefined) ch.settings.reactionDurationSec = Math.max(0.5, Math.min(10, Number(s.reactionDurationSec) || 2.5));
+  if(s.confettiParticleCount !== undefined) ch.settings.confettiParticleCount = Math.max(1, Math.min(300, Number(s.confettiParticleCount) || 80));
+  if(s.confettiDurationSec !== undefined) ch.settings.confettiDurationSec = Math.max(0.5, Math.min(15, Number(s.confettiDurationSec) || 2.5));
   if(s.profileMessage !== undefined) ch.settings.profileMessage = String(s.profileMessage).slice(0, 500);
   if(s.bonkBaseXp !== undefined) ch.settings.bonkBaseXp = Math.max(1, Math.min(1000, Number(s.bonkBaseXp) || 15));
   if(s.bonkGrowth !== undefined) ch.settings.bonkGrowth = Math.max(1, Math.min(3, Number(s.bonkGrowth) || 1.4));
@@ -822,7 +833,7 @@ function bonkLevel(xp, baseXp, growth, maxLevel){
 
 app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   const ch = getChannel(req.twitch.channel_id);
-  const { kind, glyph, speed, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
+  const { kind, glyph, speed, effect, displayName } = req.body; // kind: 'confetti' | 'reactions' | 'bonk'
   if(!['confetti','reactions','bonk'].includes(kind)) return res.status(400).send('Type de réaction invalide');
 
   const userId = req.twitch.user_id;
@@ -836,7 +847,9 @@ app.post('/api/react', verifyTwitchJWT, safeRoute(async (req, res) => {
   // Diffuse la réaction à tout le monde (y compris la personne qui vient de
   // cliquer) — c'est justement ce qui manquait : avant, seuls les points
   // étaient enregistrés, mais personne d'autre ne voyait jamais l'effet.
-  sendBroadcast(req.twitch.channel_id, { type:'reaction', kind, glyph: glyph || null, speed: speed || null }).catch(err => console.error('Erreur diffusion réaction :', err));
+  // L'effet est choisi UNE FOIS par la personne qui clique puis relayé tel
+  // quel, pour que tout le monde voie exactement le même effet.
+  sendBroadcast(req.twitch.channel_id, { type:'reaction', kind, glyph: glyph || null, speed: speed || null, effect: effect || null }).catch(err => console.error('Erreur diffusion réaction :', err));
 }));
 
 // Pousse immédiatement le vrai pseudo dès qu'un viewer partage son identité
