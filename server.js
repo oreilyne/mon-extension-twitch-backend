@@ -166,7 +166,7 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
 
     // Commande générale : liste des gagnants du live en cours (fonctionne
     // même si aucun give away n'est actif au moment où on la tape)
-    if(text === '!gagnants' && mainChannelId){
+    if((text === '!gagnants' || text === '!gagnant') && mainChannelId){
       const ch = channels.get(mainChannelId);
       if(!ch || ch.winners.length === 0){
         tmiSay('👀 Aucun gagnant pour le moment sur ce live !');
@@ -177,8 +177,8 @@ if(BOT_USERNAME && BOT_OAUTH_TOKEN && CHANNEL_LOGIN){
       return;
     }
 
-    // !guesslist : pourcentages des pronostics en cours, ouvert à tout le monde
-    if(text === '!guesslist' && mainChannelId){
+    // !guesslist (+ variantes) : pourcentages des pronostics en cours, ouvert à tout le monde
+    if(['!guesslist','!prono','!pronostics','!pronostiques','!pronostique'].includes(text) && mainChannelId){
       const ch = channels.get(mainChannelId);
       const total = ch ? ch.phasmoGuesses.size : 0;
       if(!total){
@@ -490,12 +490,10 @@ async function endPoll(channelId){
   const ch = getChannel(channelId);
   if(!ch.poll) return;
   clearTimeout(ch.pollTimer);
-  const total = ch.poll.options.reduce((s,o) => s + o.votes, 0) || 1;
-  const results = ch.poll.options
-    .map(o => ({ label:o.label, votes:o.votes, pct:Math.round(o.votes/total*100) }))
-    .sort((a,b) => b.votes - a.votes);
+  const question = ch.poll.question;
+  const options = ch.poll.options;
   ch.poll = null;
-  await sendBroadcast(channelId, { type: 'poll_end', results });
+  await sendBroadcast(channelId, { type: 'poll_end', question, options });
 }
 
 app.post('/api/poll/end', verifyTwitchJWT, requireBroadcasterOrMod, safeRoute(async (req, res) => {
